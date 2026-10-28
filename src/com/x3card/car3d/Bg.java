@@ -1,16 +1,16 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.opengl.GLES30;
 
-import com.x3card.car3d.gl.Camera;
-import com.x3card.car3d.gl.Geo;
-import com.x3card.car3d.gl.Attr;
-import com.x3card.car3d.gl.Mat;
-import com.x3card.car3d.gl.Mesh;
-import com.x3card.car3d.gl.Obj3D;
-import com.x3card.car3d.gl.Renderer;
-import com.x3card.car3d.gl.Tex;
-import com.x3card.car3d.gl.Val;
+import com.ljone.car3d.gl.Camera;
+import com.ljone.car3d.gl.Geo;
+import com.ljone.car3d.gl.Attr;
+import com.ljone.car3d.gl.Mat;
+import com.ljone.car3d.gl.Mesh;
+import com.ljone.car3d.gl.Obj3D;
+import com.ljone.car3d.gl.Renderer;
+import com.ljone.car3d.gl.Tex;
+import com.ljone.car3d.gl.Val;
 
 /**
  * 车况页的背景（照 style.css 的 .pg-car .bg）：影棚 / 暖调 / 冷调三套径向渐变（椭圆 75%×46%、中心在 50% 60%，在 sRGB 里插值，同 CSS），

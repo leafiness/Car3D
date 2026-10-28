@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.app.Activity;
 import android.app.ActivityOptions;
@@ -16,8 +16,8 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-import com.x3card.car3d.ach.AchPage;
-import com.x3card.car3d.ach.Trophies;
+import com.ljone.car3d.ach.AchPage;
+import com.ljone.car3d.ach.Trophies;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -67,7 +67,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (!isFull()) pip = new WeakReference<>(this);
         io.start();
-        com.x3card.car3d.gl.Prog.cacheDir(new java.io.File(getCacheDir(), "shaders"));
+        com.ljone.car3d.gl.Prog.cacheDir(new java.io.File(getCacheDir(), "shaders"));
         ioH = new Handler(io.getLooper());
         S = new Settings(this);
         host = DebugHost.wanted(this) ? new DebugHost(this, this) : new Uiplus(this, this); // 不是车机：调试宿主（车况是模拟的，调试面板里改）
@@ -103,7 +103,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         root.addView(achP, new FrameLayout.LayoutParams(-1, -1));
         ui.onTheme = (d, k) -> achP.setDark(d, k);
         tro.listen(new Trophies.Listener() {
-            @Override public void unlocked(List<com.x3card.car3d.ach.Ach> g) { if (achP.isOpen()) achP.unlocked(g); else ui.achToast.show(g); }
+            @Override public void unlocked(List<com.ljone.car3d.ach.Ach> g) { if (achP.isOpen()) achP.unlocked(g); else ui.achToast.show(g); }
             @Override public void pending(int n) { ui.setBadge(n); }
             @Override public void changed() { achP.changed(); }
         });
@@ -170,8 +170,10 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
 
     /** 看得见 / 看不见：画布停画、车况退订（同网页版：页面藏起来取消订阅，回来重订） */
     private void wake(boolean on) {
-        if (on) { view.onResume(); view.queueEvent(() -> stage.setVisible(true)); ui.setBadge(tro.pendingCount()); }
-        else { achP.closeNow(); view.queueEvent(() -> stage.setVisible(false)); view.onPause(); }
+        if (on) {
+            view.onResume(); view.queueEvent(() -> stage.setVisible(true));
+            ui.setBadge(tro.pendingCount());
+        } else { achP.closeNow(); view.queueEvent(() -> stage.setVisible(false)); view.onPause(); }
         wants(on);
         tro.setVisible(on);
     }
@@ -213,6 +215,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             case "quality": view.setRatio(S.fx().ratio); stage.fx = S.fx(); view.queueEvent(() -> stage.setPage(p)); break; // 画质一变车况页重建（材质按有没有阴影重新编译）
             case "fps": final int f = "30".equals(S.str("fps")) ? 30 : 60; view.queueEvent(() -> stage.fpsCap = f); break;
             case "fsBar": applyBar(); break;
+            case "lyrRowsP": case "lyrRowsL": case "lyrFontP": case "lyrFontL": ui.hud.invalidate(); break; // 歌词行数/字号变了马上重画
             case "model": break;
             case "stats": data.extra(statFields()); view.queueEvent(() -> p.setting(k)); break;
             default: view.queueEvent(() -> p.setting(k));
@@ -408,6 +411,20 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override public void roofTap() { final CarPage p = page; view.queueEvent(p::roofTap); }
     @Override public void tagMax(float y) { final CarPage p = page; view.queueEvent(() -> p.setTagMax(y)); }
     @Override public void panel(boolean open) { final CarPage p = page; view.queueEvent(() -> p.focus(open)); }
+    /** 音乐卡片开关：开着也订阅媒体（调试宿主下才有歌），关了恢复按氛围灯模式决定。
+     *  音乐卡片只换车模显示区：GL 视图保持可见（背景渐变/图片和车模页一致），只藏车模本体。dir：-1 车模从右滑回，+1 从左滑回，0 弹回 */
+    @Override public void musicCard(boolean on, int dir) {
+        final CarPage p = page;
+        p.setCardMusic(on, dir);
+        boolean vis = started && !slept;
+        data.use(vis, vis && p.wantsMedia());
+    }
+    /** 播放控制命令（play/pause/next/previous/togglePlayPause） */
+    @Override public void music(String action) { data.mediaCmd(action); }
+    /** 封面：coverUrl 是会话绑定的资源标识，走 openCover（不是 HTTP 下载），解码完回 ui.coverReady 上屏 */
+    @Override public void loadCover(String url) { data.loadCover(url, b -> ui.coverReady(url, b)); }
+    /** 换歌了拉整首歌词 */
+    @Override public void musicLyrics() { data.mediaLyrics(l -> ui.setLyrics(l)); }
     /** 车顶空调键：宿主的原生操作 vehicle.ac.setPower（不用车主确认）；失败交回车况页（变回去、说原因） */
     @Override public void acSet(boolean on) {
         final CarPage p = page;

@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 相机（同 three.js 的 PerspectiveCamera / OrthographicCamera：persp 为真是透视的） */
 public final class Camera extends Obj3D {

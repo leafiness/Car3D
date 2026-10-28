@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -8,7 +8,7 @@ import android.view.Gravity;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.x3card.car3d.gl.Half;
+import com.ljone.car3d.gl.Half;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

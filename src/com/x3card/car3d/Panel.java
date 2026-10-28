@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -137,6 +137,23 @@ final class Panel extends Sheet {
         r = row(true);
         r.addView(label("显示哪几项", null, "选 1～4 项，按点的顺序排；满 4 项再点会换掉最后一项"));
         r.addView(tags());
+        group("状态栏");
+        swRow("hour24", "24 小时制", "关闭则显示 12 小时制（带 AM/PM）");
+        swRow("showSec", "显示秒", "时间分钟后显示秒数");
+        if (S.bool("showSec")) swRow("secHideNarrow", "窄屏自动隐藏秒", "竖屏时隐藏秒，避免顶栏拥挤");
+        group("音乐卡片");
+        r = row(false);
+        r.addView(label("歌词行数 · 窄屏", null, "竖屏时音乐卡片里显示几行歌词"), new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(stepper("lyrRowsP", Settings.LYR_ROWS, false));
+        r = row(false);
+        r.addView(label("歌词字号 · 窄屏", null, "最大 3.0×；行高会跟着字号自动让位"), new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(stepper("lyrFontP", Settings.LYR_FONT, true));
+        r = row(false);
+        r.addView(label("歌词行数 · 宽屏", null, "宽屏时音乐卡片里显示几行歌词"), new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(stepper("lyrRowsL", Settings.LYR_ROWS, false));
+        r = row(false);
+        r.addView(label("歌词字号 · 宽屏", null, null), new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(stepper("lyrFontL", Settings.LYR_FONT, true));
         group("显示");
         r = row(true);
         r.addView(label("深浅色", null, null));
@@ -198,6 +215,26 @@ final class Panel extends Sheet {
     private View slider(String k, String name, Fmt fmt) {
         float[] lim = Settings.NUM.get(k);
         return new Slider(getContext(), name, lim[0], lim[1], lim[2], S.num(k), fmt, v -> S.set(k, v), null);
+    }
+
+    /** 步进器：左右加减号、中间当前值（行数/字号这类小档位用）。点 ± 走 Settings 的档位列表，改动后 refresh() 整行重画 */
+    private View stepper(String k, List<String> vals, boolean font) {
+        LinearLayout box = new LinearLayout(getContext());
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.addView(actBtn("−", false, () -> { int i = vals.indexOf(S.str(k)); if (i > 0) S.set(k, vals.get(i - 1)); }));
+        TextView val = new TextView(getContext());
+        String v = S.str(k);
+        if (font) {
+            String t = v.endsWith(".0") ? v.substring(0, v.length() - 2) : v;
+            val.setText(t + "×");
+        } else val.setText(v + " 行");
+        val.setTextColor(0xffeef1f6);
+        val.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.24f));
+        val.setGravity(Gravity.CENTER);
+        val.setMinWidth(px(0.8f));
+        box.addView(val);
+        box.addView(actBtn("+", false, () -> { int i = vals.indexOf(S.str(k)); if (i < vals.size() - 1) S.set(k, vals.get(i + 1)); }));
+        return box;
     }
 
     // ---------------- 车漆 / 轮毂 / 卡钳的小球 ----------------
@@ -288,7 +325,7 @@ final class Panel extends Sheet {
             b.setOnClickListener(v -> {
                 List<String> l = S.stats();
                 int i = l.indexOf(id);
-                if (i >= 0) { if (l.size() > 1) l.remove(i); } else { if (l.size() >= 4) l.remove(l.size() - 1); l.add(id); }
+                if (i >= 0) { if (l.size() > 1) l.remove(i); } else { if (l.size() >= 6) l.remove(l.size() - 1); l.add(id); }
                 S.set("stats", l);
             });
             box.addView(b);

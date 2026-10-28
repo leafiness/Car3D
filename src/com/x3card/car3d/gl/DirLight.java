@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 平行光（同 three.js 的 DirectionalLight + DirectionalLightShadow：照向 target（不在场景里，就是原点），能投影子） */
 public final class DirLight extends Obj3D {

@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 几种简单的几何体（同 three.js 的 PlaneGeometry、BoxGeometry：顶点顺序、贴图坐标都一样） */
 public final class Shapes {

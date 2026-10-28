@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 import android.opengl.GLES30;
 import android.util.Log;

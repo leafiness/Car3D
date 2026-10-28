@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -10,12 +10,13 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
+import org.json.JSONObject;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import com.x3card.car3d.ach.AchToast;
+import com.ljone.car3d.ach.AchToast;
 
 import java.util.List;
 
@@ -30,6 +31,8 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         void statusTap(); void statusPick(int i); void statusClose(); void allStatus();
         void roofTap(); void acSet(boolean on); void tagMax(float cssY);
         void panel(boolean open); void act(String name); void fullscreen(); void debug(); void trophies();
+        void musicCard(boolean on, int dir); void music(String action); void musicLyrics();
+        /** 封面加载：coverUrl 是会话资源标识，走 openCover（CarData 工作线程），完成后 ui.coverReady */ void loadCover(String url);
     }
     /** 深浅色变了：d 是要到的，k 是现在过渡到哪（成就墙跟着变） */
     interface Theme { void on(boolean d, float k); }
@@ -54,21 +57,40 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private float rem = 10;
     private int W = 1, H = 1;
     private String fsMode = "";
+    private JSONObject mediaNow;
+    private String lastTrackId = "";
+    private String coverNow = "";
+    private android.graphics.Bitmap coverBm;
     private boolean panelOn;
+    private boolean cardOn;
 
     CarUi(Context c, Settings s, Actions a) {
         super(c);
         act = a;
         S = s;
         dens = c.getResources().getDisplayMetrics().density;
-        hud = new Hud(c, new Hud.Tap() {
+        hud = new Hud(c, S, new Hud.Tap() {
             @Override public void status() { act.statusTap(); }
             @Override public void pick(int i) { act.statusPick(i); }
             @Override public void all() { act.allStatus(); }
             @Override public void close() { act.statusClose(); }
             @Override public void debug() { act.debug(); }
+            @Override public void card(boolean fromRight) {
+                cardOn = !cardOn;
+                hud.setMusic(cardOn, fromRight);
+                tags.setVisibility(cardOn ? GONE : VISIBLE); // 胎压标签浮层画在 Hud 之上，音乐页要整层藏掉
+                if (act != null) {
+                    act.musicCard(cardOn, fromRight ? -1 : 1); // dir：-1 车模从右滑回，+1 从左滑回
+                    if (cardOn) act.musicLyrics(); // 打开时补拉一次歌词
+                }
+            }
+            @Override public void music(String a) { if (act != null) act.music(a); }
         });
         hud.onMsgTop = () -> act.tagMax(hud.msgTop / dens);
+        // 红绿灯数据源（实验分支）：默认 Sim 模拟；AmapConfig.ENABLED=true 且集成高德 SDK 时走真实数据
+        TrafficLightSource ts = AmapConfig.ENABLED ? new AmapTraffic() : new SimTraffic();
+        ts.attach(c);
+        hud.setTrafficLightSource(ts);
         tags = new Tags(c, hud, act::roofTap);
         addView(hud, new LayoutParams(-1, -1));
         addView(tags, new LayoutParams(-1, -1));
@@ -169,18 +191,19 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private int px(float r) { return Math.round(r * rem); }
     private void relayout() {
         boolean p = W < H;
+        float up = p ? 0.32f : 0.34f; // 与 Hud.topShift 一致：顶栏上移的幅度，右上角三键同步上移（仅底部车况数据不动）
         LayoutParams g = new LayoutParams(px(0.56f), px(0.56f), Gravity.TOP | Gravity.END);
-        g.topMargin = px(p ? 0.43f : 0.45f); g.rightMargin = px(p ? 0.22f : 0.26f);
+        g.topMargin = px(p ? 0.43f - up : 0.45f - up); g.rightMargin = px(p ? 0.22f : 0.26f);
         gear.setLayoutParams(g);
         LayoutParams f = new LayoutParams(px(0.56f), px(0.56f), Gravity.TOP | Gravity.END);
-        f.topMargin = px(p ? 1.11f : 0.45f); f.rightMargin = px(p ? 0.22f : 0.96f);
+        f.topMargin = px(p ? 1.11f - up : 0.45f - up); f.rightMargin = px(p ? 0.22f : 0.96f);
         fs.setLayoutParams(f);
         // 奖杯键：横屏在全屏键左边、竖屏在全屏键下面（没有全屏键时占它的位置）
         boolean hasFs = fs.getVisibility() == VISIBLE;
         LayoutParams cp = new LayoutParams(px(0.56f), px(0.56f), Gravity.TOP | Gravity.END);
-        cp.topMargin = px(p ? (hasFs ? 1.79f : 1.11f) : 0.45f); cp.rightMargin = px(p ? 0.22f : hasFs ? 1.66f : 0.96f);
+        cp.topMargin = px(p ? (hasFs ? 1.79f - up : 1.11f - up) : 0.45f - up); cp.rightMargin = px(p ? 0.22f : hasFs ? 1.66f : 0.96f);
         cup.setLayoutParams(cp);
-        achToast.place(p ? (hasFs ? 2.5f : 1.82f) : 1.16f, p ? 0.22f : 0.26f);
+        achToast.place(p ? (hasFs ? 2.5f - up : 1.82f - up) : 1.16f - up, p ? 0.22f : 0.26f);
         LayoutParams t = new LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         t.bottomMargin = px(p ? 2.9f : 1.3f);
         toast.setLayoutParams(t);
@@ -232,6 +255,18 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     @Override public void acSet(boolean on) { main.post(() -> act.acSet(on)); }
     @Override public void progress(String step, float f) { main.post(() -> busy.progress(step, f)); }
     @Override public void imported(String msg) { main.post(() -> { busy.hide(); showToast(msg, msg.length() > 40 ? 8000 : 4000); }); }
+    /** 媒体快照（主线程）：交给 Hud 画音乐卡片；换歌了去拉整首歌词、换封面 */
+    @Override public void media(JSONObject m) { main.post(() -> {
+        hud.setMedia(m);
+        String tid = m == null ? "" : m.optString("trackId", "");
+        if (!tid.equals(lastTrackId)) { lastTrackId = tid; if (act != null) act.musicLyrics(); }
+        String cu = m == null ? "" : m.optString("coverUrl", "");
+        if (!cu.equals(coverNow)) { coverNow = cu; if (act != null) act.loadCover(cu); } // 换歌了换封面（走 openCover，见 Actions）
+    }); }
+    /** 封面加载完成（CarData 已回主线程；还停在这首歌才上屏） */
+    void coverReady(String url, android.graphics.Bitmap b) { if (url.equals(coverNow)) hud.setCover(b); }
+    /** 整首歌词（行列表） */
+    void setLyrics(List<String> l) { main.post(() -> hud.setLyrics(l)); }
     /** 一打开就用对深浅色（不渐变） */
     void darkNow(boolean d) { darkTo = d; hud.setDark(d, false, null); colors(); }
     boolean darkTo() { return darkTo; }

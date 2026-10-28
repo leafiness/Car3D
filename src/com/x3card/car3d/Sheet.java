@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.annotation.SuppressLint;
 import android.content.Context;

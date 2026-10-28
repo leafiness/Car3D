@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;

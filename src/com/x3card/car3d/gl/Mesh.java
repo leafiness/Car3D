@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 网格：几何体 + 材质（同 three.js 的 Mesh；GLTFLoader 不出多材质的网格，这里只有一个材质） */
 public class Mesh extends Obj3D {

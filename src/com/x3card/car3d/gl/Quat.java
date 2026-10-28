@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 四元数（同 three.js 的 Quaternion） */
 public final class Quat {

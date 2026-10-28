@@ -1,17 +1,17 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 
-import com.x3card.car3d.gl.Attr;
-import com.x3card.car3d.gl.Box3;
-import com.x3card.car3d.gl.Geo;
-import com.x3card.car3d.gl.Gltf;
-import com.x3card.car3d.gl.Half;
-import com.x3card.car3d.gl.Mat;
-import com.x3card.car3d.gl.Mesh;
-import com.x3card.car3d.gl.Obj3D;
+import com.ljone.car3d.gl.Attr;
+import com.ljone.car3d.gl.Box3;
+import com.ljone.car3d.gl.Geo;
+import com.ljone.car3d.gl.Gltf;
+import com.ljone.car3d.gl.Half;
+import com.ljone.car3d.gl.Mat;
+import com.ljone.car3d.gl.Mesh;
+import com.ljone.car3d.gl.Obj3D;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -225,8 +225,18 @@ final class CarModel {
         Rec r = new Rec();
         r.builtin = true;
         r.buf = read(c.getAssets().open("w70.glb"));
-        JSONObject w = w70();
-        r.name = w.optString("name"); r.credit = w.optString("credit");
+        // 内置车模若自带 d3car 配置（替换内置车模时），用文件自己的配置；否则沿用硬编码 W70 配置
+        JSONObject cfg = configOf(r.buf);
+        if (cfg != null) {
+            r.cfg = cfg;
+            JSONObject ex = extras(r.buf);
+            r.fmt = ex == null ? 1 : ex.optInt("d3fmt", 1);
+            r.name = cfg.optString("name", "内置车模");
+            r.credit = cfg.optString("credit", "");
+        } else {
+            JSONObject w = w70();
+            r.name = w.optString("name"); r.credit = w.optString("credit");
+        }
         return r;
     }
     /** 现在用的车模：导入过车模包就用它（读不出来、配置不对退回默认） */

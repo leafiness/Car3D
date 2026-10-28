@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 射线（同 three.js 的 Ray / Raycaster.setFromCamera 的透视相机那部分） */
 public final class Ray {

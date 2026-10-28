@@ -1,4 +1,4 @@
-package com.x3card.car3d.ach;
+package com.ljone.car3d.ach;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -6,7 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 
-import com.x3card.car3d.Uiplus;
+import com.ljone.car3d.Uiplus;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

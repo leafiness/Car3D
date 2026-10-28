@@ -1,12 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 3D 车况（原生版）：车机 Android 10，宿主（com.wzw.bydmodule）的多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.x3card.car3d"
-    android:versionCode="5"
-    android:versionName="0.5">
+    package="com.ljone.car3d"
+    android:versionCode="517"
+    android:versionName="0.5.17-exp">
 
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!-- 封面是宿主给的 http 局域网地址：要联网权限，且允许明文 http（Android 9+ 默认拦截） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 高德导航 SDK 红绿灯（实验分支）所需；ENABLED=false 时不会真正用到 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <queries>
         <package android:name="com.wzw.bydmodule" />
     </queries>
@@ -18,6 +24,7 @@
         android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:resizeableActivity="true"
+        android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
         <activity
             android:name=".MainActivity"
@@ -34,7 +41,7 @@
             android:name=".FullActivity"
             android:exported="false"
             android:launchMode="singleTask"
-            android:taskAffinity="com.x3card.car3d.full"
+            android:taskAffinity="com.ljone.car3d.full"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|uiMode" />

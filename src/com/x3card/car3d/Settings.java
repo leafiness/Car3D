@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -92,9 +92,13 @@ final class Settings {
         NUM.put("dAz", new float[] { -3.15f, 3.15f, 0.01f, (float) Math.PI });
         NUM.put("dEl", new float[] { 0.04f, 1.3f, 0.01f, 1.08f });
         NUM.put("dZoom", new float[] { 0.7f, 1.4f, 0.05f, 1 });
+        // 音乐卡片歌词：窄屏/宽屏各自记行数与字号档位（字符串设置，配分段按钮，见 LYR_ROWS / LYR_FONT）
     }
+    /** 歌词行数 / 字号的可选档位（步进器用） */
+    static final List<String> LYR_ROWS = Arrays.asList("3", "4", "5", "6", "7", "8");
+    static final List<String> LYR_FONT = Arrays.asList("0.9", "1.0", "1.2", "1.5", "1.8", "2.2", "2.6", "3.0");
     static final List<String> VIEW = Arrays.asList("viewAz", "viewEl", "viewZoom", "viewFov"), DVIEW = Arrays.asList("dAz", "dEl", "dZoom");
-    static final List<String> BOOL = Arrays.asList("labels", "intro", "aa", "fsBar");
+    static final List<String> BOOL = Arrays.asList("labels", "intro", "aa", "fsBar", "hour24", "showSec", "secHideNarrow");
     static final Map<String, String> HEX = new LinkedHashMap<>();
     static { HEX.put("paintHex", "#3a7bd5"); HEX.put("rimHex", "#b8bcc4"); HEX.put("calHex", "#2bb673"); }
 
@@ -118,8 +122,10 @@ final class Settings {
         d.put("theme", "auto"); d.put("bg", "studio"); d.put("bgDim", 0.25f);
         d.put("viewAz", -0.72f); d.put("viewEl", 0.2f); d.put("viewZoom", 1f); d.put("viewFov", 27f);
         d.put("dAz", (float) Math.PI); d.put("dEl", 1.08f); d.put("dZoom", 1f);
-        d.put("stats", Arrays.asList("bat", "fuel", "range", "temp"));
+        d.put("lyrRowsP", "5"); d.put("lyrRowsL", "5"); d.put("lyrFontP", "1.0"); d.put("lyrFontL", "1.0");
+        d.put("stats", Arrays.asList("bat", "fuel", "range", "eRange", "temp", "odo"));
         d.put("labels", true); d.put("intro", true); d.put("quality", "eco"); d.put("fps", "60"); d.put("aa", false); d.put("fsBar", false);
+        d.put("hour24", true); d.put("showSec", false); d.put("secHideNarrow", true);
         return d;
     }
     private static boolean ok(String k, Object v) {
@@ -129,7 +135,7 @@ final class Settings {
         if ("stats".equals(k)) {
             if (!(v instanceof List)) return false;
             List<?> l = (List<?>) v;
-            if (l.isEmpty() || l.size() > 4) return false;
+            if (l.isEmpty() || l.size() > 6) return false;
             for (int i = 0; i < l.size(); i++) if (l.indexOf(l.get(i)) != i || CarStat.byId(String.valueOf(l.get(i))) == null) return false;
             return true;
         }
@@ -139,6 +145,8 @@ final class Settings {
         if ("bg".equals(k)) return BGS.contains(v);
         if ("quality".equals(k)) return QUAL.containsKey(v);
         if ("fps".equals(k)) return FPS.contains(v);
+        if ("lyrRowsP".equals(k) || "lyrRowsL".equals(k)) return LYR_ROWS.contains(v);
+        if ("lyrFontP".equals(k) || "lyrFontL".equals(k)) return LYR_FONT.contains(v);
         return false;
     }
     synchronized void load() {

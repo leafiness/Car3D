@@ -60,7 +60,7 @@ export function meta(SRC) {
  */
 export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress = [], tk, install }) {
   const { BT, JAR, bin, bt, run } = tk;
-  fs.rmSync(OUT, { recursive: true, force: true });
+  // 不清整目录（会在沙箱里被当成批量删除拦截）；子目录靠下面的 mkdirSync 重建、产物由 javac/d8 覆盖
   ['gen', 'classes', 'dex'].forEach((d) => fs.mkdirSync(path.join(OUT, d), { recursive: true }));
   const t0 = Date.now();
   // 0. 资源

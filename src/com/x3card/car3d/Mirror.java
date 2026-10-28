@@ -1,17 +1,17 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.opengl.GLES30;
 
-import com.x3card.car3d.gl.Camera;
-import com.x3card.car3d.gl.M4;
-import com.x3card.car3d.gl.Mat;
-import com.x3card.car3d.gl.Mesh;
-import com.x3card.car3d.gl.Obj3D;
-import com.x3card.car3d.gl.Programs;
-import com.x3card.car3d.gl.RT;
-import com.x3card.car3d.gl.Renderer;
-import com.x3card.car3d.gl.Shapes;
-import com.x3card.car3d.gl.V3;
+import com.ljone.car3d.gl.Camera;
+import com.ljone.car3d.gl.M4;
+import com.ljone.car3d.gl.Mat;
+import com.ljone.car3d.gl.Mesh;
+import com.ljone.car3d.gl.Obj3D;
+import com.ljone.car3d.gl.Programs;
+import com.ljone.car3d.gl.RT;
+import com.ljone.car3d.gl.Renderer;
+import com.ljone.car3d.gl.Shapes;
+import com.ljone.car3d.gl.V3;
 
 /**
  * 地面反射（画质高、极致；照网页版 car3d.js 的 mirror() + three r149 的 Reflector）：车下面一块镜面，按离车中心的距离渐隐，像展厅抛光的地面。

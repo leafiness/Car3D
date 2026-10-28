@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -100,7 +100,8 @@ final class CarStat {
             if (Boolean.TRUE.equals(c.get("ac.compressor"))) it.tags.add("A/C");
             L.add(it);
         }
-        if (Boolean.TRUE.equals(c.get("ac.rear.power"))) {
+        // 后排空调：只有真的报了后排温度/风量的车才显示（没后排空调的车机不会报这两个字段，别只看 power 就挂出来）
+        if (Boolean.TRUE.equals(c.get("ac.rear.power")) && (c.get("ac.rear.temperature") != null || c.get("ac.rear.fanLevel") != null)) {
             Double rt = num(c.get("ac.rear.temperature"), true);
             Object rf = c.get("ac.rear.fanLevel");
             List<String> rx = new ArrayList<>();

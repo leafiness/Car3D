@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 3×3 矩阵，按列存（法线矩阵、贴图坐标变换用，同 three.js 的 Matrix3） */
 public final class M3 {

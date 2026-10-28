@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 轴对齐的外框（同 three.js 的 Box3） */
 public final class Box3 {

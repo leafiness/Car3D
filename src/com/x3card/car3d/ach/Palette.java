@@ -1,4 +1,4 @@
-package com.x3card.car3d.ach;
+package com.ljone.car3d.ach;
 
 /** 勋章的颜色：等级的金属（线性色 + 粗糙度）、分类的珐琅（线性色 + 界面用的 sRGB 色） */
 final class Palette {

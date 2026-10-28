@@ -1,4 +1,4 @@
-package com.x3card.car3d.ach;
+package com.ljone.car3d.ach;
 
 /**
  * 成就墙的排版（主线程点击判断、GL 画都按它，同一组输入算出来的一样）：

@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 颜色，存线性值（同 three.js r149 的 Color，ColorManagement.legacyMode = false：十六进制、样式字符串按 sRGB 写，换算成线性存） */
 public final class Col {

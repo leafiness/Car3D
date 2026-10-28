@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
@@ -10,18 +10,18 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
-import com.x3card.car3d.gl.Camera;
-import com.x3card.car3d.gl.Half;
-import com.x3card.car3d.gl.M4;
-import com.x3card.car3d.gl.RT;
-import com.x3card.car3d.gl.Shapes;
-import com.x3card.car3d.gl.Val;
-import com.x3card.car3d.gl.Mat;
-import com.x3card.car3d.gl.Mesh;
-import com.x3card.car3d.gl.Obj3D;
-import com.x3card.car3d.gl.Programs;
-import com.x3card.car3d.gl.Renderer;
-import com.x3card.car3d.gl.Tex;
+import com.ljone.car3d.gl.Camera;
+import com.ljone.car3d.gl.Half;
+import com.ljone.car3d.gl.M4;
+import com.ljone.car3d.gl.RT;
+import com.ljone.car3d.gl.Shapes;
+import com.ljone.car3d.gl.Val;
+import com.ljone.car3d.gl.Mat;
+import com.ljone.car3d.gl.Mesh;
+import com.ljone.car3d.gl.Obj3D;
+import com.ljone.car3d.gl.Programs;
+import com.ljone.car3d.gl.Renderer;
+import com.ljone.car3d.gl.Tex;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -59,6 +59,8 @@ public final class Stage implements GLSurfaceView.Renderer {
         boolean fast();
         /** 画这一帧之前（地面反射在这里画） */
         void pre(Renderer r);
+        /** 停在音乐卡片页：车模藏着，拖动/点按不生效 */
+        default boolean cardMusic() { return false; }
     }
 
     final AssetManager assets;
@@ -113,7 +115,7 @@ public final class Stage implements GLSurfaceView.Renderer {
         try {
             if (Programs.chunk("bsdfs") == null) Programs.load(new String(Half.readAll(assets.open("three-shaders.json")), "UTF-8"));
         } catch (Exception e) { Log.w("car3d", "着色器读不出来", e); }
-        com.x3card.car3d.gl.Prog.initCache();
+        com.ljone.car3d.gl.Prog.initCache();
         renderer = new Renderer();
         renderer.toneMapping = Programs.ACES;
         renderer.outputEncoding = Programs.SRGB;
@@ -244,7 +246,7 @@ public final class Stage implements GLSurfaceView.Renderer {
         Camera cam = page.camera();
         int mask = cam.layers;
         stillBuf();
-        sc.traverse(o -> { if (o instanceof com.x3card.car3d.gl.DirLight) o.layers |= OV; });
+        sc.traverse(o -> { if (o instanceof com.ljone.car3d.gl.DirLight) o.layers |= OV; });
         renderer.clear(true, true);
         bg.draw(renderer, bw, bh, W, H);
         cam.layers = 1;
@@ -373,7 +375,7 @@ public final class Stage implements GLSurfaceView.Renderer {
     private static final class G { float x0, y0, x, y, vx; long t0, lt; String mode = ""; boolean rot; }
     private G g;
     void touch(int act, float x, float y, long t) {
-        if (page == null || !ready) return;
+        if (page == null || !ready || page.cardMusic()) return; // 音乐页：车模藏着，拖动/点按不生效（免得切回去车转到怪角度）
         if (act == 0) {
             g = new G();
             g.x0 = g.x = x; g.y0 = g.y = y; g.t0 = g.lt = t;

@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -13,14 +13,14 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
 
-import com.x3card.car3d.gl.Attr;
-import com.x3card.car3d.gl.Col;
-import com.x3card.car3d.gl.Geo;
-import com.x3card.car3d.gl.Half;
-import com.x3card.car3d.gl.Mat;
-import com.x3card.car3d.gl.Mesh;
-import com.x3card.car3d.gl.Obj3D;
-import com.x3card.car3d.gl.Tex;
+import com.ljone.car3d.gl.Attr;
+import com.ljone.car3d.gl.Col;
+import com.ljone.car3d.gl.Geo;
+import com.ljone.car3d.gl.Half;
+import com.ljone.car3d.gl.Mat;
+import com.ljone.car3d.gl.Mesh;
+import com.ljone.car3d.gl.Obj3D;
+import com.ljone.car3d.gl.Tex;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

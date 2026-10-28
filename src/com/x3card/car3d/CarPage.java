@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -12,24 +12,24 @@ import android.graphics.Shader;
 import android.opengl.GLES30;
 import android.util.Log;
 
-import com.x3card.car3d.gl.Attr;
-import com.x3card.car3d.gl.Box3;
-import com.x3card.car3d.gl.Camera;
-import com.x3card.car3d.gl.Col;
-import com.x3card.car3d.gl.DirLight;
-import com.x3card.car3d.gl.Geo;
-import com.x3card.car3d.gl.Gltf;
-import com.x3card.car3d.gl.M4;
-import com.x3card.car3d.gl.Mat;
-import com.x3card.car3d.gl.Mesh;
-import com.x3card.car3d.gl.Obj3D;
-import com.x3card.car3d.gl.Programs;
-import com.x3card.car3d.gl.Ray;
-import com.x3card.car3d.gl.Scene;
-import com.x3card.car3d.gl.Shapes;
-import com.x3card.car3d.gl.Tex;
-import com.x3card.car3d.gl.V3;
-import com.x3card.car3d.gl.Val;
+import com.ljone.car3d.gl.Attr;
+import com.ljone.car3d.gl.Box3;
+import com.ljone.car3d.gl.Camera;
+import com.ljone.car3d.gl.Col;
+import com.ljone.car3d.gl.DirLight;
+import com.ljone.car3d.gl.Geo;
+import com.ljone.car3d.gl.Gltf;
+import com.ljone.car3d.gl.M4;
+import com.ljone.car3d.gl.Mat;
+import com.ljone.car3d.gl.Mesh;
+import com.ljone.car3d.gl.Obj3D;
+import com.ljone.car3d.gl.Programs;
+import com.ljone.car3d.gl.Ray;
+import com.ljone.car3d.gl.Scene;
+import com.ljone.car3d.gl.Shapes;
+import com.ljone.car3d.gl.Tex;
+import com.ljone.car3d.gl.V3;
+import com.ljone.car3d.gl.Val;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -69,6 +69,8 @@ final class CarPage implements Stage.Page {
         void progress(String step, float f);
         /** 导入的车模建好、画出来了（或者建不出来换回了默认车模）：收起导入框，说一句 */
         void imported(String msg);
+        /** 媒体快照（标题/歌手/播放态/进度/当前歌词/封面）；音乐卡片用 */
+        void media(JSONObject m);
     }
     /** 下面那行字的一条：等级、文字、点了看哪儿（轮子 / 部件） */
     static final class St { int lv; String t; List<String> tyres, parts; St(int lv, String t) { this.lv = lv; this.t = t; } boolean go() { return tyres != null || parts != null; } }
@@ -128,7 +130,8 @@ final class CarPage implements Stage.Page {
     private String ambientHex;
     private Lamps LS;
     private String ambArea = "all";
-    private boolean musicOn, playing, colorful;
+    private boolean musicOn, playing, colorful, cardMusic;
+    private JSONObject mediaNow;
     private final Col hueCol = new Col();
     private float welT = 1;
     private Object lastPw = "\u0000";
@@ -272,7 +275,7 @@ final class CarPage implements Stage.Page {
         apply(carNow);
         sysIcons();
         openAt = now(); opening = true;
-        com.x3card.car3d.gl.Prog.compiled = com.x3card.car3d.gl.Prog.loaded = 0; com.x3card.car3d.gl.Prog.compileMs = 0;
+        com.ljone.car3d.gl.Prog.compiled = com.ljone.car3d.gl.Prog.loaded = 0; com.ljone.car3d.gl.Prog.compileMs = 0;
         try { rec = CarModel.current(ctx); }
         catch (Exception e) { Log.w("car3d", "车模读不出来", e); out.loading("3D 车模型加载失败"); return; }
         try { parse(g, null); }
@@ -441,7 +444,7 @@ final class CarPage implements Stage.Page {
             }
             if (mt.flatShading) flat.put(mt, true);
         });
-        try { com.x3card.car3d.gl.Work.all(new ArrayList<>(groups.values()), l -> { for (Geo g : l) CarModel.wind(g); }); }
+        try { com.ljone.car3d.gl.Work.all(new ArrayList<>(groups.values()), l -> { for (Geo g : l) CarModel.wind(g); }); }
         catch (Exception e) { Log.w("car3d", "理顺绕向出错", e); }
     }
     private List<Mesh> mrefs(Object r) { return CarModel.meshRefs(d3, r); }
@@ -450,6 +453,7 @@ final class CarPage implements Stage.Page {
 
     private void build(Obj3D model, JSONObject c) {
         root = new Obj3D();
+        root.visible = !cardMusic; // 车模建好时若停在音乐页，先藏起来（背景照常）
         scene.add(root);
         modelObj = model;
         d3 = (CarModel.D3) model.get("d3");
@@ -734,7 +738,7 @@ final class CarPage implements Stage.Page {
         WrapCut cut = new WrapCut(new WrapCut.Ctx() {
             @Override public Obj3D root() { return R0; }
             @Override public WrapArt.Dims dims() { return d0; }
-            @Override public com.x3card.car3d.gl.Renderer renderer() { return app.renderer; }
+            @Override public com.ljone.car3d.gl.Renderer renderer() { return app.renderer; }
             @Override public android.content.Context android() { return ctx; }
             @Override public boolean shadow() { return sh; }
             @Override public float envK() { return env0; }
@@ -937,7 +941,7 @@ final class CarPage implements Stage.Page {
         return keep;
     }
     private void restore(List<Object[]> keep) {
-        for (Object[] x : keep) { ((Obj3D) x[0]).position.copy((V3) x[1]); ((Obj3D) x[0]).quaternion.copy((com.x3card.car3d.gl.Quat) x[2]); }
+        for (Object[] x : keep) { ((Obj3D) x[0]).position.copy((V3) x[1]); ((Obj3D) x[0]).quaternion.copy((com.ljone.car3d.gl.Quat) x[2]); }
         root.updateMatrixWorld(true);
     }
     /** 设置里"调整车牌"开着：正在调哪块（能按住拖；车保持静止）；镜头看着它；正拖着时：起点、在哪个平面上拖、手指按下的地方离牌子中心多远 */
@@ -1593,12 +1597,48 @@ final class CarPage implements Stage.Page {
     void setCar(Map<String, Object> c) { carNow = c; apply(c); }
     void setSys(Map<String, Object> s) { sysNow = s; sysIcons(); }
     void setMedia(JSONObject m) {
+        mediaNow = m;
         boolean p = m != null && m.optBoolean("playing");
-        if (p == playing) return;
-        playing = p;
-        if (app != null && musicOn) app.invalidate();
+        if (p != playing) { playing = p; if (app != null && musicOn) app.invalidate(); }
+        if (out != null) out.media(m);
     }
-    boolean wantsMedia() { return musicOn; }
+    /** 音乐卡片开着：也想要媒体订阅（调试宿主下才有歌）。开时立刻藏车模（不等动画，防竞态漏藏）、背景照常画；
+     *  关时车模按滑动方向从侧面滑回（dir：+1 从左、-1 从右、0 原地弹回） */
+    void setCardMusic(boolean on, int dir) {
+        if (on == cardMusic) return;
+        cardMusic = on;
+        if (needs != null) needs.run();
+        if (root != null) {
+            if (carAnim != null) carAnim.cancel();
+            root.visible = !on; // 立刻藏/显：不依赖动画结束回调（偶现 cancel/end 时序竞态会漏藏）
+            if (on) { root.scale.set(1, 1, 1); root.position.x = 0; carAniming = false; }
+            else { // 回车模页：按方向从侧面滑回 + 轻微弹回，一起收尾
+                float x0 = dir == 0 ? 0 : -dir * slideDist(), s0 = dir == 0 ? 0.9f : 1;
+                carAniming = true; // 动画期间冻结充电桩 tick（见 update 里的说明）
+                carAnim = new android.animation.ValueAnimator();
+                carAnim.setFloatValues(0, 1);
+                carAnim.setDuration(300);
+                carAnim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+                carAnim.addListener(new android.animation.AnimatorListenerAdapter() {
+                    @Override public void onAnimationEnd(android.animation.Animator a) { carAniming = false; }
+                });
+                carAnim.addUpdateListener(a -> {
+                    float t = (Float) a.getAnimatedValue();
+                    if (root != null) { root.scale.set(s0 + (1 - s0) * t, s0 + (1 - s0) * t, s0 + (1 - s0) * t); root.position.x = x0 * (1 - t); }
+                    if (app != null) app.invalidate();
+                });
+                carAnim.start();
+            }
+        }
+        if (app != null) app.invalidate(); // 强制重画一帧：否则「没变不重画」会让最后一帧一直留着
+    }
+    private android.animation.ValueAnimator carAnim;
+    private boolean carAniming; // 切页滑回动画进行中：冻结充电桩 tick，防止枪/线缆几何用动画中的世界矩阵烘焙
+    /** 车模横向滑入距离（约 0.6 个车宽的世界单位） */
+    private float slideDist() { return Math.max(3f, dimsHw * 1.2f); }
+    /** 当前是不是停在音乐卡片这一页（3D 拖动/点按在这页不生效） */
+    @Override public boolean cardMusic() { return cardMusic; }
+    boolean wantsMedia() { return musicOn || cardMusic; }
     private void apply(Map<String, Object> c) {
         Object n = c.get("display.dayNightMode");
         if (n != null) prefs.edit().putString("carDark", "night".equals(n) ? "1" : "0").apply();
@@ -1973,6 +2013,7 @@ final class CarPage implements Stage.Page {
     private float bgK = -1;
     @Override public int update(float dt) {
         if (root == null) return 0;
+        if (cardMusic && root.visible) { root.visible = false; if (app != null) app.invalidate(); } // 保险：音乐页上车模绝不能显示（任何路径漏藏这里兜住）
         boolean moving = false;
         for (Map.Entry<String, Float> e : want.entrySet()) {
             String k = e.getKey();
@@ -1982,7 +2023,7 @@ final class CarPage implements Stage.Page {
             cur.put(k, a);
         }
         boolean chgAnim = false;
-        if (chg != null) {
+        if (chg != null && !carAniming) { // 切页滑回动画期间跳过：枪/线缆几何用 pile.matrixWorld 烘焙，动画中的矩阵会被烘进永久偏移
             int ca = chg.tick(dt, themeK);
             if (ca == 2) { moving = true; shadowDirty = true; } else if (ca == 1) chgAnim = true;
             if (chg.wanted() != chgOn) { // 插上枪：镜头转到看充电桩的角度；拔掉：转回来（手指转过车就不管）
@@ -2200,7 +2241,7 @@ final class CarPage implements Stage.Page {
                 n++;
             }
         } finally {
-            for (Object[] x : keep) { ((Obj3D) x[0]).position.copy((V3) x[1]); ((Obj3D) x[0]).quaternion.copy((com.x3card.car3d.gl.Quat) x[2]); }
+            for (Object[] x : keep) { ((Obj3D) x[0]).position.copy((V3) x[1]); ((Obj3D) x[0]).quaternion.copy((com.ljone.car3d.gl.Quat) x[2]); }
             root.updateMatrixWorld(true);
         }
         if (n == 0) return null;
@@ -2281,7 +2322,7 @@ final class CarPage implements Stage.Page {
     private static boolean firstOpen = true;
     private void openDone() {
         opening = false;
-        String s = "载入车况页到画出车 " + (now() - openAt) + " 毫秒（着色器现编译 " + com.x3card.car3d.gl.Prog.compiled + " 个 " + com.x3card.car3d.gl.Prog.compileMs + " 毫秒，读缓存 " + com.x3card.car3d.gl.Prog.loaded + " 个）";
+        String s = "载入车况页到画出车 " + (now() - openAt) + " 毫秒（着色器现编译 " + com.ljone.car3d.gl.Prog.compiled + " 个 " + com.ljone.car3d.gl.Prog.compileMs + " 毫秒，读缓存 " + com.ljone.car3d.gl.Prog.loaded + " 个）";
         if (firstOpen) { firstOpen = false; s = "打开：进程启动后 " + (android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()) + " 毫秒画出车；" + s; }
         Log.w("car3d", s);
     }
@@ -2528,7 +2569,7 @@ final class CarPage implements Stage.Page {
     @Override public boolean fast() { return true; }
     // ================= 地面反射（画质高、极致） =================
     private Mirror mirror;
-    @Override public void pre(com.x3card.car3d.gl.Renderer r) {
+    @Override public void pre(com.ljone.car3d.gl.Renderer r) {
         if (mirror == null || root == null || !root.visible) return;
         mirror.setK(0.2f + 0.14f * themeK); // 深色时更明显
         mirror.render(r, scene, camera);

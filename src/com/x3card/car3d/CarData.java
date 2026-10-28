@@ -1,4 +1,4 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.os.Handler;
 import android.os.Looper;
@@ -215,6 +215,48 @@ final class CarData {
         if (id.equals(carId)) onVehicle(d);
         else if (id.equals(sysId)) onSys(d);
         else if (id.equals(mediaId)) onMedia(d);
+    }
+    /** 发一个媒体控制命令（play/pause/next/previous/togglePlayPause） */
+    void mediaCmd(String action) { try { host.request("media." + action, new JSONObject(), null); } catch (Exception ignored) { } }
+    /** 拉整首歌词（行列表）；拿不到返回空列表 */
+    interface LyricsCb { void on(List<String> lines); }
+    void mediaLyrics(LyricsCb cb) {
+        try { host.request("media.getLyrics", new JSONObject(), (r, code, msg) -> {
+            List<String> l = new ArrayList<>();
+            JSONArray a = r == null ? null : r.optJSONArray("lines");
+            if (a == null && r != null) { JSONObject d = r.optJSONObject("data"); if (d != null) a = d.optJSONArray("lines"); } // 有的宿主包一层 data
+            for (int i = 0; a != null && i < a.length(); i++) l.add(a.optString(i));
+            if (cb != null) cb.on(l);
+        }); } catch (Exception ignored) { if (cb != null) cb.on(new ArrayList<>()); }
+    }
+
+    /** 封面回调 */
+    interface CoverCb { void on(android.graphics.Bitmap b); }
+
+    /** 封面：coverUrl 是会话绑定的资源标识（形如 https://media.uiplus.invalid/<token>），按规范不能发起 HTTP 下载，
+     *  要在工作线程走 openCover 拿只读文件描述符解码；读取设 8MB 上限、用完关描述符 */
+    void loadCover(String url, CoverCb cb) {
+        if (url == null || url.isEmpty()) { main.post(() -> cb.on(null)); return; }
+        new Thread(() -> {
+            android.graphics.Bitmap b = null;
+            android.os.ParcelFileDescriptor pfd = null;
+            try {
+                pfd = host.openCover(url);
+                if (pfd != null) {
+                    java.io.InputStream is = new java.io.FileInputStream(pfd.getFileDescriptor());
+                    java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[16384];
+                    int n, total = 0;
+                    while ((n = is.read(buf)) > 0 && total < 8 * 1024 * 1024) { bo.write(buf, 0, n); total += n; }
+                    is.close();
+                    byte[] d = bo.toByteArray();
+                    b = android.graphics.BitmapFactory.decodeByteArray(d, 0, d.length);
+                }
+            } catch (Exception ignored) {
+            } finally { if (pfd != null) try { pfd.close(); } catch (Exception ignored) { } }
+            final android.graphics.Bitmap bm = b;
+            main.post(() -> cb.on(bm));
+        }, "cover").start();
     }
 
     private static void merge(JSONObject t, JSONObject p) {

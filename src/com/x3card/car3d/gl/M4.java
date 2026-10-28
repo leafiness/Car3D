@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 4×4 矩阵，按列存（同 three.js 的 Matrix4.elements，直接交给 GL） */
 public final class M4 {

@@ -1,13 +1,16 @@
-package com.x3card.car3d;
+package com.ljone.car3d;
 
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 
-import com.x3card.car3d.gl.Half;
+import com.ljone.car3d.gl.Half;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,10 +26,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import java.io.FileOutputStream;
+
 /**
  * 调试宿主（照网页版 demo3d/debughost.js）：没装宿主、或者这台机器不是比亚迪车机（模拟器、手机）时顶替真宿主，
  * 照接口文档的样子返回数据、接受调用，应用照常走车机上那条路（新版宿主格式：{data: 业务树}、数字编码、同节点伴随属性；订阅首次全量、之后只推变了的叶子）。
- * 车况默认是一台停着的车，不会自己变：调试面板（DebugPanel）里选了哪项才改哪项、勾了"自动"的才自己变。
+ * 调试默认把各系统都打开（空调/前后排空调、座椅加热通风、灯光、能量回收、无线充电、保电、坡度、PM2.5……），让卡片上一眼能看到全部车况图标；告警/故障类（双闪、制动、低压供电、钥匙电池低）保持关闭，免得误报。车况不会自己变：调试面板（DebugPanel）里选了哪项才改哪项、勾了"自动"的才自己变。
  * 原生版用得到的都有：宿主信息、能力目录、车况 / 系统数据的查询和订阅、系统属性、媒体快照与整首歌词、80 项原生操作（参数按目录校验，对得上车况字段的改模拟车况）；
  * 还能模拟车控权限关着、连接断开、下几次订阅失败。窗口、加载遮罩、模型工具这些原生版用不到，没搬。
  * 字段目录是 assets 的 fields.json（全部车况也用），操作目录是 actions.json（_apk/car3d/assets.mjs 从网页版的目录里拿出来）。改过的存在 SharedPreferences d3debug
@@ -86,28 +91,28 @@ final class DebugHost implements Host {
         dv("driving.speed", 0, "driving.gear", 3, "driving.sessionDuration", 0, "driving.sessionDistance", 0, "driving.journeyDistance", 0, "driving.journeyDistanceUnit", 1,
             "driving.totalDistance", 12873000, "driving.totalDistanceUnit", "m", "driving.evTotalDistance", 6210, "driving.hevTotalDistance", 6663,
             "driving.evSessionDistance", 0, "driving.hevSessionDistance", 0, "driving.averageSpeed", 32, "power.level", 3, "identity.vin", "LGXCE4CB0R0123456",
-            "energy.batteryPercent", 76, "energy.fuelPercent", 58, "energy.electricRange", 82, "energy.fuelRange", 640, "energy.wirelessCharging", 2, "energy.socSave", 1,
-            "energy.socTarget", 25, "energy.regenerationLevel", 1, "energy.operationMode", 1, "energy.mode", 1, "energy.simulator", 0, "energy.chargingState", 1,
+            "energy.batteryPercent", 76, "energy.fuelPercent", 58, "energy.electricRange", 82, "energy.fuelRange", 640, "energy.wirelessCharging", 1, "energy.socSave", 2,
+            "energy.socTarget", 25, "energy.regenerationLevel", 2, "energy.operationMode", 1, "energy.mode", 1, "energy.simulator", 1, "energy.chargingState", 1,
             "energy.connectorState", 1, "energy.charging.power", 0, "energy.charging.capacity", 0, "energy.charging.remainingTime", NULL, "energy.charging.type", 1,
             "energy.consumption.averageElectric", 15.2, "energy.consumption.averageElectricUnit", 1, "energy.consumption.recentElectric", 14.8,
             "energy.consumption.instantElectric", 0, "energy.consumption.averageFuel", 5.1, "energy.consumption.recentFuel", 4.9, "energy.consumption.instantFuel", 0,
             "energy.consumption.instantFuelUnit", 1, "energy.wirelessChargingState", 3,
-            "ac.power", 0, "ac.compressor", 0, "ac.driverTemperature", 24, "ac.driverTemperatureUnit", 1, "ac.indoorTemperature", 24, "ac.indoorTemperatureUnit", 1,
-            "ac.outdoorTemperature", 21, "ac.outdoorTemperatureUnit", 1, "ac.fanLevel", 0, "ac.circulation", 0, "ac.frontDefrost", 0, "ac.rearDefrost", 0,
-            "seat.driver.heating", 1, "seat.passenger.heating", 1, "seat.driver.ventilation", 1, "seat.passenger.ventilation", 1, "seat.driver.beltFastened", 1,
+            "ac.power", 1, "ac.compressor", 1, "ac.driverTemperature", 24, "ac.driverTemperatureUnit", 1, "ac.indoorTemperature", 24, "ac.indoorTemperatureUnit", 1,
+            "ac.outdoorTemperature", 21, "ac.outdoorTemperatureUnit", 1, "ac.fanLevel", 3, "ac.circulation", 1, "ac.frontDefrost", 1, "ac.rearDefrost", 1,
+            "seat.driver.heating", 2, "seat.passenger.heating", 2, "seat.driver.ventilation", 2, "seat.passenger.ventilation", 2, "seat.driver.beltFastened", 1,
             "body.windows.anyOpen", 0, "body.windows.ventilation", 0, "body.windows.halfOpen", 0, "body.sunroof.position", 0, "body.sunshade.position", 0,
             "body.tailgate.state", 0, "body.doors.frontLeft.state", 0, "body.doors.frontRight.state", 0, "body.doors.rearLeft.state", 0, "body.doors.rearRight.state", 0,
             "body.hood.state", 0, "body.windows.frontLeft.position", 0, "body.windows.frontRight.position", 0, "body.windows.rearLeft.position", 0, "body.windows.rearRight.position", 0,
-            "light.daytimeRunning", 1, "light.side", 0, "light.lowBeam", 0, "light.dynamicColorful", 2, "light.ambient.area", 3, "light.ambient.brightness", 4,
-            "light.ambient.color", 1, "light.ambient.musicMode", 2, "light.highBeam", 0, "light.turnSignal.left", 0, "light.turnSignal.right", 0,
-            "light.frontFog", 0, "light.rearFog", 0, "light.hazard", 2, "light.brake", 3, "body.pedals.accelerator", 0, "body.pedals.brake", 0,
-            "environment.pm25.indoor", 12, "environment.pm25.outdoor", 35, "environment.pm25.indoorLevel", 1, "environment.pm25.outdoorLevel", 2, "environment.slope", 0,
+            "light.daytimeRunning", 1, "light.side", 0, "light.lowBeam", 1, "light.dynamicColorful", 2, "light.ambient.area", 3, "light.ambient.brightness", 4,
+            "light.ambient.color", 1, "light.ambient.musicMode", 2, "light.highBeam", 1, "light.turnSignal.left", 0, "light.turnSignal.right", 0,
+            "light.frontFog", 1, "light.rearFog", 1, "light.hazard", 2, "light.brake", 3, "body.pedals.accelerator", 0, "body.pedals.brake", 0,
+            "environment.pm25.indoor", 12, "environment.pm25.outdoor", 35, "environment.pm25.indoorLevel", 1, "environment.pm25.outdoorLevel", 2, "environment.slope", 8,
             "tyre.displayUnit", 1, "display.dayNightMode", h0 >= 19 || h0 < 6 ? 32 : 16, "engine.rpm", 0, "engine.coolantTemperature", 85,
             "warning.lowVoltageBatteryFault", 0, "warning.keyBatteryLow", 2, "audio.volume", 18, "audio.navigationVolume", 12, "audio.muted", 0,
             "maintenance.distance", 5000, "maintenance.days", 120,
             // 前后排空调、电机转速、雷达、三种告警：停着的车雷达没在工作（null）；告警照文档说的实车采样——盲区 null、开门预警和后方横向预警 0
-            "ac.windMode", 1, "ac.controlMode", 1, "ac.rear.windMode", 1, "ac.rear.temperature", 24, "ac.rear.temperatureUnit", 1, "ac.rear.fanLevel", 0,
-            "ac.rear.power", 0, "ac.rear.controlMode", 1, "motor.front.rpm", 0, "motor.rear.rpm", 0,
+            "ac.windMode", 1, "ac.controlMode", 0, "ac.rear.windMode", 1, "ac.rear.temperature", 24, "ac.rear.temperatureUnit", 1, "ac.rear.fanLevel", 2,
+            "ac.rear.power", 1, "ac.rear.controlMode", 0, "motor.front.rpm", 0, "motor.rear.rpm", 0,
             "warning.bsd.left", NULL, "warning.bsd.right", NULL, "warning.dow.left", 0, "warning.dow.right", 0, "warning.rcta.left", 0, "warning.rcta.right", 0);
         for (String k : new String[] { "leftFront", "rightFront", "leftRear", "rightRear", "left", "right", "frontLeftMid", "frontRightMid", "middleRear" }) DEF_V.put("radar.distance." + k, NULL);
         String[] ws = { "frontLeft", "frontRight", "rearLeft", "rearRight" };
@@ -222,7 +227,42 @@ final class DebugHost implements Host {
     @Override public boolean canRead() { return true; }
     @Override public boolean canExec() { return true; }
     @Override public String session() { return started ? "debug" : null; }
-    @Override public ParcelFileDescriptor openCover(String url) { return null; }
+    @Override public ParcelFileDescriptor openCover(String url) {
+        // 调试态没有真车机相册封面：为 debug://cover/<序号> 生成一张占位封面，
+        // 用管道把 PNG 流成可读 PFD 返回（与真机 openCover 同契约，CarData 照常解码上屏）；
+        // 非 debug 的 URL 不在此处理，留给 CarData 调真机宿主。
+        if (url == null || !url.startsWith("debug://cover/")) return null;
+        try {
+            int idx = Integer.parseInt(url.substring("debug://cover/".length()));
+            Bitmap b = makeDebugCover(idx);
+            if (b == null) return null;
+            ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+            ParcelFileDescriptor readPfd = pipe[0], writePfd = pipe[1];
+            new Thread(() -> {
+                try {
+                    b.compress(Bitmap.CompressFormat.PNG, 100, new FileOutputStream(writePfd.getFileDescriptor()));
+                } catch (Exception ignored) { }
+                finally { b.recycle(); try { writePfd.close(); } catch (Exception ignored) { } }
+            }, "dbg-cover").start();
+            return readPfd;
+        } catch (Exception e) { return null; }
+    }
+    /** 调试封面：按序号取不同底色 + 唱片圆 + 序号，纯占位，让调试态也能看到封面在变 */
+    private Bitmap makeDebugCover(int idx) {
+        try {
+            int s = 512;
+            Bitmap b = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
+            Canvas cv = new Canvas(b);
+            int[] pal = { 0xFF1E88E5, 0xFF00897B, 0xFFE53935, 0xFF6A1B9A, 0xFF3949AB, 0xFF00838F };
+            cv.drawColor(pal[((idx % pal.length) + pal.length) % pal.length]);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setColor(0x33FFFFFF); cv.drawCircle(s / 2f, s / 2f, s * 0.32f, p);
+            p.setColor(0xFFFFFFFF); cv.drawCircle(s / 2f, s / 2f, s * 0.12f, p);
+            p.setTextSize(s * 0.20f); p.setTextAlign(Paint.Align.RIGHT);
+            cv.drawText(String.valueOf(idx + 1), s * 0.92f, s * 0.92f, p);
+            return b;
+        } catch (Exception e) { return null; }
+    }
     @Override public void authorize(JSONObject permissions, Uiplus.Reply reply) {
         main.post(() -> { if (reply != null) { try { reply.done(new JSONObject().put("granted", true), null, null); } catch (Exception ignored) { } } listener.onPermissions(true, true); });
     }

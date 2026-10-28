@@ -1,4 +1,4 @@
-package com.x3card.car3d.gl;
+package com.ljone.car3d.gl;
 
 /** 三维向量（同 three.js 的 Vector3，方法名、行为照它） */
 public final class V3 {
