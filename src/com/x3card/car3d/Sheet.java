@@ -77,7 +77,8 @@ abstract class Sheet extends FrameLayout {
             CHEV_STROKE = 0x80000000; CHEV_FILL = 0x14000000;
         } else {
             TXT = 0xffeef1f6; SUB = 0xa6eef1f6; MUTE = 0xb3eef1f6;
-            CARD_TOP = 0xff000000; CARD_BOT = 0xff000000; CARD_BORDER = 0x00000000;
+            // 深色恢复主题化之前的偏蓝深灰渐变（原 #262a34 → #0f1116），替代 v0.7.14 起的纯黑
+            CARD_TOP = 0xff262a34; CARD_BOT = 0xff0f1116; CARD_BORDER = 0x00000000;
             GROUP_BG = 0xff1c1c1f; GROUP_BORDER = 0x00000000; GROUP_TITLE = 0xff8e8e93;
             LINE = 0xff2c2c2e; INFO = 0xff8b97a8; ICON = 0xffd0d4da; SEG_BG = 0x0fffffff; SEG_OFF_TXT = 0x99eef1f6;
             SEG_ON_TXT = 0xffcfe0ff; SEG_ON_BG = 0x1f5b8cff; SW_OFF = 0x24ffffff; TRACK_OFF = 0x24ffffff;
@@ -261,7 +262,7 @@ abstract class Sheet extends FrameLayout {
         cd.setCornerRadius(px(0.3f));
         cd.setColor(GROUP_BG);
         card.setBackground(cd);
-        card.setPadding(px(0.22f), px(0.16f), px(0.22f), px(0.16f));
+        card.setPadding(px(0.22f), 0, px(0.22f), px(0.16f)); // 顶部不额外留白：首个设置项到顶边距离减半
         LinearLayout rows = new LinearLayout(getContext());
         rows.setOrientation(LinearLayout.VERTICAL);
         card.addView(rows);
