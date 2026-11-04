@@ -45,12 +45,21 @@ final class CarStat {
 
     /** 一个车况图标：cls 颜色类（ok / bad / warn / on / warm / blue，solo 只有图标），icon 图标名（fan 是风扇），text 文字，tags 小标（AUTO、送风方向……），modes 驾驶 / 能源模式小牌 */
     static final class Item {
-        final String cls, icon, text; final List<String> tags = new ArrayList<>(); final List<String[]> modes = new ArrayList<>();
-        Item(String cls, String icon, String text) { this.cls = cls == null ? "" : cls; this.icon = icon; this.text = text == null ? "" : text; }
-        String key() { return cls + "|" + icon + "|" + text + "|" + tags + "|" + modes.size() + (modes.isEmpty() ? "" : modes.get(0)[0] + (modes.size() > 1 ? modes.get(1)[0] : "")); }
+        final String id, cls, icon, text; final List<String> tags = new ArrayList<>(); final List<String[]> modes = new ArrayList<>();
+        Item(String id, String cls, String icon, String text) { this.id = id; this.cls = cls == null ? "" : cls; this.icon = icon; this.text = text == null ? "" : text; }
+        String key() { return id + "|" + cls + "|" + icon + "|" + text + "|" + tags + "|" + modes.size() + (modes.isEmpty() ? "" : modes.get(0)[0] + (modes.size() > 1 ? modes.get(1)[0] : "")); }
         boolean bad() { return cls.matches(".*\\bbad\\b.*"); }
         boolean warn() { return cls.matches(".*\\bwarn\\b.*"); }
     }
+    /** 每个车况图标一个稳定 id（第一列），名字（第二列）；开关设置照这个 id 存 */
+    static final String[][] TELLS = {
+        { "belt", "安全带" }, { "heat", "座椅加热" }, { "vent", "座椅通风" }, { "ac", "空调" }, { "acRear", "后排空调" }, { "defF", "前除霜" },
+        { "defR", "后除霜" }, { "mute", "静音" }, { "modes", "驾驶模式" }, { "regen", "能量回收" }, { "sim", "声浪" },
+        { "save", "保电" }, { "wc", "无线充电" }, { "rpm", "发动机转速" }, { "pm", "车内 PM2.5" }, { "slope", "坡度" },
+        { "high", "远光" }, { "fogF", "前雾灯" }, { "fogR", "后雾灯" }, { "hazard", "双闪" }, { "brake", "紧急制动" },
+        { "lowV", "低压供电" }, { "key", "钥匙电池" }
+    };
+    static boolean tellsId(String id) { for (String[] t : TELLS) if (t[0].equals(id)) return true; return false; }
     static final String[] LV = { null, "低档", "高档" };
     static String seatLv(Map<String, Object> c, String what) {
         List<String> l = new ArrayList<>();
@@ -78,23 +87,23 @@ final class CarStat {
         Object gear = c.get("driving.gear"), sp = c.get("driving.speed");
         return "D".equals(gear) || "R".equals(gear) || (sp instanceof Number && ((Number) sp).doubleValue() > 0);
     }
-    /** 车况图标：[0] 左列座舱、[1] 右列驾驶和能源、灯光、告警 */
+    /** 车况图标：[0] 左列座舱、[1] 右列驾驶和能源、灯光、告警。每个图标带稳定 id（见 TELLS），供设置里自由开关 */
     static List<List<Item>> telltales(Map<String, Object> c) {
         List<Item> L = new ArrayList<>(), R = new ArrayList<>();
         boolean moving = moving(c);
         Object belt = c.get("seat.driver.beltFastened");
-        if (Boolean.TRUE.equals(belt)) L.add(new Item("ok solo", "belt", ""));
-        else if (Boolean.FALSE.equals(belt)) L.add(new Item("bad", "belt", moving ? "主驾没系安全带" : "主驾未系"));
+        if (Boolean.TRUE.equals(belt)) L.add(new Item("belt", "ok solo", "belt", ""));
+        else if (Boolean.FALSE.equals(belt)) L.add(new Item("belt", "bad", "belt", moving ? "主驾没系安全带" : "主驾未系"));
         String heat = seatLv(c, "heating"), vent = seatLv(c, "ventilation");
-        if (!heat.isEmpty()) L.add(new Item("warm", "heat", "加热 " + heat));
-        if (!vent.isEmpty()) L.add(new Item("on", "vent", "通风 " + vent));
+        if (!heat.isEmpty()) L.add(new Item("heat", "warm", "heat", "加热 " + heat));
+        if (!vent.isEmpty()) L.add(new Item("vent", "on", "vent", "通风 " + vent));
         if (Boolean.TRUE.equals(c.get("ac.power"))) {
             Double t = num(c.get("ac.driverTemperature"), true);
             Object f = c.get("ac.fanLevel");
             List<String> tx = new ArrayList<>();
             if (t != null) tx.add(fmt(t) + "°C");
             if (f instanceof Number) tx.add("风 " + fmt(((Number) f).doubleValue()));
-            Item it = new Item("on", "fan", tx.isEmpty() ? "空调开着" : String.join(" · ", tx));
+            Item it = new Item("ac", "on", "fan", tx.isEmpty() ? "空调开着" : String.join(" · ", tx));
             acTags(c, "ac.", it);
             if ("inside".equals(c.get("ac.circulation"))) it.tags.add("内循环");
             if (Boolean.TRUE.equals(c.get("ac.compressor"))) it.tags.add("A/C");
@@ -107,49 +116,49 @@ final class CarStat {
             List<String> rx = new ArrayList<>();
             if (rt != null) rx.add(fmt(rt) + "°C");
             if (rf instanceof Number) rx.add("风 " + fmt(((Number) rf).doubleValue()));
-            Item it = new Item("on", "fan", "后排" + (rx.isEmpty() ? "空调开着" : " " + String.join(" · ", rx)));
+            Item it = new Item("acRear", "on", "fan", "后排" + (rx.isEmpty() ? "空调开着" : " " + String.join(" · ", rx)));
             acTags(c, "ac.rear.", it);
             L.add(it);
         }
-        if (Boolean.TRUE.equals(c.get("ac.frontDefrost"))) L.add(new Item("warm", "defF", "前除霜"));
-        if (Boolean.TRUE.equals(c.get("ac.rearDefrost"))) L.add(new Item("warm", "defR", "后除霜"));
-        if (Boolean.TRUE.equals(c.get("audio.muted"))) L.add(new Item("", "mute", "静音"));
+        if (Boolean.TRUE.equals(c.get("ac.frontDefrost"))) L.add(new Item("defF", "warm", "defF", "前除霜"));
+        if (Boolean.TRUE.equals(c.get("ac.rearDefrost"))) L.add(new Item("defR", "warm", "defR", "后除霜"));
+        if (Boolean.TRUE.equals(c.get("audio.muted"))) L.add(new Item("mute", "", "mute", "静音"));
         String opm = String.valueOf(c.get("energy.operationMode")), emd = String.valueOf(c.get("energy.mode"));
         String om = "eco".equals(opm) ? "ECO" : "sport".equals(opm) ? "SPORT" : "comfort".equals(opm) ? "COMFORT" : null, em = "ev".equals(emd) ? "EV" : "hev".equals(emd) ? "HEV" : null;
         if (om != null || em != null) {
-            Item it = new Item("modes", null, "");
+            Item it = new Item("modes", "modes", null, "");
             if (om != null) it.modes.add(new String[] { om, opm });
             if (em != null) it.modes.add(new String[] { em, emd });
             R.add(it);
         }
-        if ("high".equals(c.get("energy.regenerationLevel"))) R.add(new Item("", "regen", "能量回收 高"));
-        if (Boolean.TRUE.equals(c.get("energy.simulator"))) R.add(new Item("", "sim", "声浪"));
+        if ("high".equals(c.get("energy.regenerationLevel"))) R.add(new Item("regen", "", "regen", "能量回收 高"));
+        if (Boolean.TRUE.equals(c.get("energy.simulator"))) R.add(new Item("sim", "", "sim", "声浪"));
         if (c.get("energy.socSave") instanceof Boolean) {
             Double soc = num(c.get("energy.socTarget"), false);
-            R.add(new Item("", "save", (Boolean.TRUE.equals(c.get("energy.socSave")) ? "强制保电" : "智能保电") + (soc != null ? " " + fmt(soc) + "%" : "")));
+            R.add(new Item("save", "", "save", (Boolean.TRUE.equals(c.get("energy.socSave")) ? "强制保电" : "智能保电") + (soc != null ? " " + fmt(soc) + "%" : "")));
         }
         if (Boolean.TRUE.equals(c.get("energy.wirelessCharging"))) {
             Object ws = c.get("energy.wirelessChargingState");
             String t = "charging".equals(ws) ? "无线充电中" : "full".equals(ws) ? "手机已充满" : "fault".equals(ws) ? "无线充电故障" : "standby".equals(ws) ? "无线充电" : "无线充电";
-            R.add(new Item("charging".equals(ws) ? "ok" : "fault".equals(ws) ? "bad" : "", "wc", t));
+            R.add(new Item("wc", "charging".equals(ws) ? "ok" : "fault".equals(ws) ? "bad" : "", "wc", t));
         }
         Object pl = c.get("environment.pm25.indoorLevel");
         if (pl instanceof Number && ((Number) pl).doubleValue() >= 3) {
             int p = ((Number) pl).intValue();
             Object pv = c.get("environment.pm25.indoor");
-            R.add(new Item(p >= 5 ? "bad" : "warn", "pm", "车内 PM2.5 " + (p >= 1 && p <= 6 ? PM[p] : "") + (pv instanceof Number ? " " + Math.round(((Number) pv).doubleValue()) : "")));
+            R.add(new Item("pm", p >= 5 ? "bad" : "warn", "pm", "车内 PM2.5 " + (p >= 1 && p <= 6 ? PM[p] : "") + (pv instanceof Number ? " " + Math.round(((Number) pv).doubleValue()) : "")));
         }
         Object sl = c.get("environment.slope");
-        if (sl instanceof Number && Math.abs(((Number) sl).doubleValue()) >= 5) R.add(new Item("warn", "slope", "坡度 " + Math.round(((Number) sl).doubleValue()) + "%"));
+        if (sl instanceof Number && Math.abs(((Number) sl).doubleValue()) >= 5) R.add(new Item("slope", "warn", "slope", "坡度 " + Math.round(((Number) sl).doubleValue()) + "%"));
         Object rpm = c.get("engine.rpm");
-        if (rpm instanceof Number && ((Number) rpm).doubleValue() > 0) R.add(new Item("", "rpm", Math.round(((Number) rpm).doubleValue()) + " rpm"));
-        if (Boolean.TRUE.equals(c.get("light.highBeam"))) R.add(new Item("blue", "high", "远光"));
-        if (Boolean.TRUE.equals(c.get("light.frontFog"))) R.add(new Item("ok", "fogF", "前雾灯"));
-        if (Boolean.TRUE.equals(c.get("light.rearFog"))) R.add(new Item("warn", "fogR", "后雾灯"));
-        if (Boolean.TRUE.equals(c.get("light.hazard"))) R.add(new Item("bad", "hazard", "双闪"));
-        if ("flash".equals(c.get("light.brake"))) R.add(new Item("bad", "brake", "紧急制动"));
-        if (Boolean.TRUE.equals(c.get("warning.lowVoltageBatteryFault"))) R.add(new Item("bad", "lowV", "低压供电异常"));
-        if (Boolean.TRUE.equals(c.get("warning.keyBatteryLow"))) R.add(new Item("warn", "key", "钥匙电池低"));
+        if (rpm instanceof Number && ((Number) rpm).doubleValue() > 0) R.add(new Item("rpm", "", "rpm", Math.round(((Number) rpm).doubleValue()) + " rpm"));
+        if (Boolean.TRUE.equals(c.get("light.highBeam"))) R.add(new Item("high", "blue", "high", "远光"));
+        if (Boolean.TRUE.equals(c.get("light.frontFog"))) R.add(new Item("fogF", "ok", "fogF", "前雾灯"));
+        if (Boolean.TRUE.equals(c.get("light.rearFog"))) R.add(new Item("fogR", "warn", "fogR", "后雾灯"));
+        if (Boolean.TRUE.equals(c.get("light.hazard"))) R.add(new Item("hazard", "bad", "hazard", "双闪"));
+        if ("flash".equals(c.get("light.brake"))) R.add(new Item("brake", "bad", "brake", "紧急制动"));
+        if (Boolean.TRUE.equals(c.get("warning.lowVoltageBatteryFault"))) R.add(new Item("lowV", "bad", "lowV", "低压供电异常"));
+        if (Boolean.TRUE.equals(c.get("warning.keyBatteryLow"))) R.add(new Item("key", "warn", "key", "钥匙电池低"));
         List<List<Item>> o = new ArrayList<>();
         o.add(L); o.add(R);
         return o;
@@ -187,15 +196,15 @@ final class CarStat {
         { "bat", "电量", "能源" }, { "fuel", "油量", "能源" }, { "range", "总续航", "能源" }, { "eRange", "纯电续航", "能源" }, { "fRange", "燃油续航", "能源" },
         { "soc", "SOC 目标", "能源", "energy.socTarget", "%" }, { "chgT", "充电还要", "能源", "energy.charging.remainingTime", "rt" },
         { "chgP", "充电功率", "能源", "energy.charging.power", "*" }, { "chgC", "充电量", "能源", "energy.charging.capacity", "*" },
-        { "eAvg", "平均电耗", "能耗", "energy.consumption.averageElectric", "u*" }, { "eRec", "近期电耗", "能耗", "energy.consumption.recentElectric", "*" },
-        { "eNow", "瞬时电耗", "能耗", "energy.consumption.instantElectric", "*" }, { "fAvg", "平均油耗", "能耗", "energy.consumption.averageFuel", "*" },
-        { "fRec", "近期油耗", "能耗", "energy.consumption.recentFuel", "*" }, { "fNow", "瞬时油耗", "能耗", "energy.consumption.instantFuel", "u" },
+        { "eAvg", "平均电耗", "能耗", "energy.consumption.averageElectric", "ek" }, { "eRec", "近期电耗", "能耗", "energy.consumption.recentElectric", "ek" },
+        { "eNow", "瞬时电耗", "能耗", "energy.consumption.instantElectric", "ek" }, { "fAvg", "平均油耗", "能耗", "energy.consumption.averageFuel", "fl" },
+        { "fRec", "近期油耗", "能耗", "energy.consumption.recentFuel", "fl" }, { "fNow", "瞬时油耗", "能耗", "energy.consumption.instantFuel", "fl" },
         { "odo", "总里程", "里程" }, { "dur", "本次时长", "里程", "driving.sessionDuration", "dur" }, { "trip", "本次里程", "里程", "driving.sessionDistance", "km" },
-        { "jour", "旅程里程", "里程", "driving.journeyDistance", "u" }, { "evT", "累计纯电", "里程", "driving.evTotalDistance", "km" }, { "hevT", "累计混动", "里程", "driving.hevTotalDistance", "km" },
+        { "jour", "旅程里程", "里程", "driving.journeyDistance", "km" }, { "evT", "累计纯电", "里程", "driving.evTotalDistance", "km" }, { "hevT", "累计混动", "里程", "driving.hevTotalDistance", "km" },
         { "evS", "本次纯电", "里程", "driving.evSessionDistance", "km" }, { "hevS", "本次混动", "里程", "driving.hevSessionDistance", "km" }, { "avgSp", "平均速度", "里程", "driving.averageSpeed", "*" },
         { "temp", "车外温度", "空调" }, { "inTemp", "车内温度", "空调" }, { "setT", "空调设温", "空调", "ac.driverTemperature", "°C" }, { "fan", "风量", "空调", "ac.fanLevel", "档" },
         { "rSetT", "后排设温", "空调", "ac.rear.temperature", "°C" }, { "rFan", "后排风量", "空调", "ac.rear.fanLevel", "档" },
-        { "pmIn", "车内 PM2.5", "环境", "environment.pm25.indoor", "*" }, { "pmOut", "车外 PM2.5", "环境", "environment.pm25.outdoor", "*" }, { "slope", "坡度", "环境", "environment.slope", "%" },
+        { "pmIn", "车内 PM2.5", "环境", "environment.pm25.indoor", "ug" }, { "pmOut", "车外 PM2.5", "环境", "environment.pm25.outdoor", "ug" }, { "slope", "坡度", "环境", "environment.slope", "%" },
         { "acc", "油门踏板", "驾驶", "body.pedals.accelerator", "%" }, { "brk", "制动踏板", "驾驶", "body.pedals.brake", "%" },
         { "rpm", "发动机转速", "驾驶", "engine.rpm", "rpm" }, { "mF", "前电机转速", "驾驶", "motor.front.rpm", "rpm" }, { "mR", "后电机转速", "驾驶", "motor.rear.rpm", "rpm" },
         { "rdLF", "左前雷达", "雷达", "radar.distance.leftFront", "*" }, { "rdFLM", "前左中雷达", "雷达", "radar.distance.frontLeftMid", "*" }, { "rdFRM", "前右中雷达", "雷达", "radar.distance.frontRightMid", "*" },
@@ -222,10 +231,13 @@ final class CarStat {
         if (!(v instanceof Number)) return null;
         double d = ((Number) v).doubleValue();
         if ("dur".equals(f)) { long m = (long) Math.floor(d / 60); return m >= 60 ? new String[] { (m / 60) + "\u0001时\u0001" + (m % 60), "分" } : new String[] { String.valueOf(m), "分" }; }
-        boolean one = "*".equals(f) || "u*".equals(f) || "u".equals(f) || ("km".equals(f) && d < 100);
+        boolean one = "*".equals(f) || "u*".equals(f) || "u".equals(f) || "ug".equals(f) || "ek".equals(f) || "fl".equals(f) || ("km".equals(f) && d < 100);
         double n = one ? Math.round(d * 10) / 10.0 : Math.round(d);
         if ("u".equals(f) || "u*".equals(f)) { String u = unitOf.of(s[3]); return new String[] { fmt(n), (u == null ? "" : u) + ("u*".equals(f) ? "*" : "") }; }
         if ("*".equals(f)) return new String[] { fmt(n), "*" };
+        if ("ug".equals(f)) return new String[] { fmt(n), "μg/m³" }; // PM2.5 规范单位（微克每立方米），固定不依赖宿主
+        if ("ek".equals(f)) return new String[] { fmt(n), "kWh" }; // 电耗：千瓦时，固定不依赖宿主（宿主 unitOf 一直返回 null）
+        if ("fl".equals(f)) return new String[] { fmt(n), "L" }; // 油耗：升，固定不依赖宿主
         return new String[] { fmt(n), f == null ? "" : f };
     }
 }

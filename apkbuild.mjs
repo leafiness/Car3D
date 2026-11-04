@@ -58,10 +58,20 @@ export function meta(SRC) {
  * 打包：SRC 工程目录（AndroidManifest.xml、res/、src/）、OUT 中间产物目录、APK_DIR 放成品的目录、KS 签名钥匙、
  * ASSETS 现成的 assets 目录（或者给 prepare(ASSETS) 现做）、noCompress、tk = tools() 的结果、install 打完用 adb 装上
  */
-export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress = [], tk, install }) {
+export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress = [], tk, install, STUBS, EXTRA_DEX = [], EXTRA_ASSETS = [] }) {
   const { BT, JAR, bin, bt, run } = tk;
   // 不清整目录（会在沙箱里被当成批量删除拦截）；子目录靠下面的 mkdirSync 重建、产物由 javac/d8 覆盖
   ['gen', 'classes', 'dex'].forEach((d) => fs.mkdirSync(path.join(OUT, d), { recursive: true }));
+  // 额外的预编译资源（如红绿灯 SDK 的 native 库）拷进 assets 根目录，让 aapt link 一并打包
+  if (ASSETS && fs.existsSync(ASSETS)) for (const a of (EXTRA_ASSETS || [])) { try { fs.copyFileSync(a, path.join(ASSETS, path.basename(a))); } catch (e) { console.error('拷 assets 失败: ' + a + ' - ' + e); } }
+  // 编译期桩（com.ljone.car3d.TrafficLight / com.xlsyn.light.*）：只给 javac 当 classpath 用，不进主 dex
+  let STUB_CP = null;
+  if (STUBS) {
+    const sc = path.join(OUT, 'stub-classes'); fs.mkdirSync(sc, { recursive: true });
+    const stubJava = files(STUBS, '.java');
+    if (stubJava.length) run(bin('javac'), ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', JAR + path.delimiter + path.join(BT, 'core-lambda-stubs.jar'), '-d', sc].concat(stubJava));
+    STUB_CP = sc;
+  }
   const t0 = Date.now();
   // 0. 资源
   if (prepare) { ASSETS = path.join(OUT, 'assets'); fs.mkdirSync(ASSETS, { recursive: true }); await prepare(ASSETS); }
@@ -76,12 +86,20 @@ export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress
     .concat(ASSETS && fs.existsSync(ASSETS) ? ['-A', rel(ASSETS)] : [], ...noCompress.map((e) => ['-0', e]), ['--java', rel(path.join(OUT, 'gen')), '--auto-add-overlay', rel(path.join(OUT, 'res.zip'))]), { cwd: SRC });
   // 2. Java → class（按 Java 8 编译，只链接 android.jar；lambda 要的 LambdaMetafactory 在 build-tools 的 core-lambda-stubs.jar 里，d8 再把它脱糖）
   const java = files(path.join(SRC, 'src'), '.java').concat(files(path.join(OUT, 'gen'), '.java'));
-  run(bin('javac'), ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', JAR + path.delimiter + path.join(BT, 'core-lambda-stubs.jar'), '-Xlint:-options', '-d', path.join(OUT, 'classes')].concat(java));
+  const javacArgs = ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', JAR + path.delimiter + path.join(BT, 'core-lambda-stubs.jar'), '-Xlint:-options', '-d', path.join(OUT, 'classes')];
+  if (STUB_CP) javacArgs.push('-classpath', STUB_CP);
+  run(bin('javac'), javacArgs.concat(java));
   // 3. class → dex
   run(bin('java'), ['-cp', path.join(BT, 'lib', 'd8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '28', '--lib', JAR, '--output', path.join(OUT, 'dex')]
     .concat(files(path.join(OUT, 'classes'), '.class')));
-  // 4. dex 放进 APK（aapt add 按相对路径放，所以在 dex 目录里执行）
-  run(bt('aapt'), ['add', path.join('..', 'base.apk'), 'classes.dex'], { cwd: path.join(OUT, 'dex') });
+  // 4. 额外的预编译 dex（红绿灯 SDK / TrafficLight）追加进 APK——用不冲突的名字，避免覆盖 d8 自己拆出的 classesN.dex
+  let ei = 1;
+  for (const dx of (EXTRA_DEX || [])) {
+    let name; do { name = 'classes' + (ei++) + '.dex'; } while (fs.existsSync(path.join(OUT, 'dex', name)));
+    fs.copyFileSync(dx, path.join(OUT, 'dex', name));
+  }
+  // dex 放进 APK（aapt add 按相对路径放，所以在 dex 目录里执行）
+  for (const dx of files(path.join(OUT, 'dex'), '.dex')) run(bt('aapt'), ['add', path.join('..', 'base.apk'), path.basename(dx)], { cwd: path.join(OUT, 'dex') });
   // 5. 对齐、签名
   run(bt('zipalign'), ['-p', '-f', '4', 'base.apk', 'aligned.apk'], { cwd: OUT });
   if (!fs.existsSync(KS)) {

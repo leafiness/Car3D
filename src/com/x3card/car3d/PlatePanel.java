@@ -219,8 +219,13 @@ final class PlatePanel extends Sheet {
     }
     private void bg(float[] c) { put(st, "bg", Settings.hsl2hex(c[0], c[1], c[2])); paintNum(); ownChanged(); }
     /** 一排按键（.pkeys）：这一位不能用的字是灰的 */
-    private View keys(String chars, String nx, String style, String tx) {
-        Flow box = new Flow(getContext());
+    /** 按键的间距（同 .pkeys .tag 的 margin） */
+    private LinearLayout.LayoutParams keyLp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.rightMargin = px(0.05f); lp.bottomMargin = px(0.05f);
+        return lp;
+    }
+    private View keys(String chars, String nx, String style, String tx) {        Flow box = new Flow(getContext());
         for (char ch : chars.toCharArray()) {
             final String c = String.valueOf(ch);
             boolean ok = nx.contains(c);
@@ -241,7 +246,7 @@ final class PlatePanel extends Sheet {
                 ownChanged();
                 refresh();
             });
-            box.addView(b);
+            box.addView(b, keyLp());
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = px(0.12f);

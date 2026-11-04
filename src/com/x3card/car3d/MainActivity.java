@@ -2,7 +2,12 @@ package com.ljone.car3d;
 
 import android.app.Activity;
 import android.app.ActivityOptions;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -11,10 +16,18 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import java.io.File;
 
 import com.ljone.car3d.ach.AchPage;
 import com.ljone.car3d.ach.Trophies;
@@ -56,6 +69,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     private final HandlerThread io = new HandlerThread("io");
     private Handler ioH;
     private boolean started, slept;
+    private boolean musicPageOn; // 停在音乐卡片页：真=音乐页，假=车模页
     private long fsAt;
 
     /** 全屏页（FullActivity）是真；多窗口里、从桌面直接打开的是假 */
@@ -134,17 +148,48 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         final float tm = ui.hud.msgTop / getResources().getDisplayMetrics().density;
         view.queueEvent(() -> { p.setCar(car); p.setSys(sys); if (tm > 0) p.setTagMax(tm); });
         stage.setPage(page);
+        // 同级页面：Hud 的 pageOffset 变化时，只把车模本身往左滑出/滑回（车况背景 Bg 保持满屏固定），
+        // 这样音乐背景半透明淡入时下方始终是车况背景、不会露出黑底亮暗缝；GL 停画按 pageOffset 实时决定——
+        // 只有完全停在音乐页（且非拖拽）才停，拖拽/滑动途中保持渲染，车模跟着平移进出
+        ui.hud.setOnPageOffset(() -> {
+            float ph = ui.hud.pagePhase();
+            p.setPageOffset(ph);
+            boolean onMusic = Math.abs(ph - 1f) < 0.012f && !ui.hud.dragging(); // 完全停在音乐页(phase≈1)才停 GL；阈值与车模可见边界(0.985)对齐，循环切页时车模刚露头 GL 已恢复渲染
+            view.queueEvent(() -> stage.setVisible(started && !slept && !onMusic));
+            view.queueEvent(() -> stage.invalidate()); // 滑动途中让 GL 继续出帧，车模跟着平滑滑出/滑回
+            ui.setPagePhase(ph); // 胎压标签随相位淡出：滑到音乐页不残留标签（与 Hud 车况 UI 同步）
+        });
         acOk();
     }
 
     @Override protected void onStart() {
         super.onStart();
         started = true;
+        File f = new File(getCacheDir(), "update.apk"); if (f.exists()) f.delete(); // 清掉上一次更新残留的缓存包
         reload();
         ui.setFsMode(isFull() ? "small" : onMainScreen() ? "" : "full");
         if (!slept) wake(true);
         host.start();
         if (isFull()) { MainActivity p = pip.get(); if (p != null && p != this) p.sleep(true); }
+        autoCheckUpdate();
+    }
+
+    /** 启动时静默查一次远端版本：有新版就直接弹更新框。车机不会自动重拉 APK（这是独立安装的应用），所以得让用户一眼看到「有新版本」。查不到不打扰。 */
+    private boolean autoChecked;
+    private void autoCheckUpdate() {
+        if (autoChecked || isFull()) return; // 全屏页不打扰；一次进程只查一次
+        autoChecked = true;
+        main.postDelayed(() -> {
+            if (!started) return;
+            Updater.check(this, new Updater.CheckCb() {
+                @Override public void onLatest() { }
+                @Override public void onUpdate(String remoteName, String notes) {
+                    ui.toast("发现新版本 V" + remoteName + "，点击可更新", 4000);
+                    showUpdateDialog(remoteName, notes);
+                }
+                @Override public void onError(String msg) { } // 网络不通就当没这回事，别弹错误
+            });
+        }, 2500);
     }
     @Override protected void onStop() {
         started = false;
@@ -159,7 +204,12 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         io.quitSafely();
         super.onDestroy();
     }
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    }
     @Override public void onBackPressed() {
+        // 更新弹窗：返回键也能关（只认返回键和「取消」按钮，点外面不关，避免误关装更新的确认框）
+        if (updateDlg != null && updateDlg.isShowing()) { updateDlg.dismiss(); return; }
         if (achP.back()) return;
         if (ui.panelOpen()) ui.panel(false);
         else if (plateP.isOpen()) plateP.show(false);
@@ -168,10 +218,14 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         else super.onBackPressed();
     }
 
+    /** GL 该不该画：看得见、没睡、不在音乐页。
+     *  音乐页时整个 GL 停画（车模和车况背景都在 Stage 里，setVisible 掐的是渲染帧入口，两者一起停），
+     *  两个页面互不干扰：车况背景再也影响不到音乐页，音乐背景也不压在车模上。 */
+    private boolean glWanted() { return started && !slept && !musicPageOn; }
     /** 看得见 / 看不见：画布停画、车况退订（同网页版：页面藏起来取消订阅，回来重订） */
     private void wake(boolean on) {
         if (on) {
-            view.onResume(); view.queueEvent(() -> stage.setVisible(true));
+            view.onResume(); view.queueEvent(() -> stage.setVisible(glWanted()));
             ui.setBadge(tro.pendingCount());
         } else { achP.closeNow(); view.queueEvent(() -> stage.setVisible(false)); view.onPause(); }
         wants(on);
@@ -205,7 +259,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         view.queueEvent(p::platesFromStore); // 车牌：全屏页、小窗口另一边可能改过
     }
     private static final String[] KEYS = { "paint", "rim", "caliper", "finish", "paintHex", "rimHex", "calHex", "theme", "bg", "bgDim", "viewAz", "viewEl", "viewZoom", "viewFov",
-        "stats", "labels", "intro", "quality", "fps", "aa", "fsBar" };
+        "stats", "labels", "intro", "quality", "fps", "aa", "fsBar",
+        "mBgMode", "mBgCover", "mBgColor" };
 
     /** 一项设置变了（主线程） */
     private void setting(String k) {
@@ -215,7 +270,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             case "quality": view.setRatio(S.fx().ratio); stage.fx = S.fx(); view.queueEvent(() -> stage.setPage(p)); break; // 画质一变车况页重建（材质按有没有阴影重新编译）
             case "fps": final int f = "30".equals(S.str("fps")) ? 30 : 60; view.queueEvent(() -> stage.fpsCap = f); break;
             case "fsBar": applyBar(); break;
-            case "lyrRowsP": case "lyrRowsL": case "lyrFontP": case "lyrFontL": ui.hud.invalidate(); break; // 歌词行数/字号变了马上重画
+            case "lyricLinesP": case "lyricLinesL": case "lyricSizeP": case "lyricSizeL": ui.hud.invalidate(); break; // 歌词行数/字号变了马上重画
+            case "mBgMode": case "mBgCover": case "mBgColor": ui.hud.invalidate(); break; // 音乐卡片背景变了马上重画
             case "model": break;
             case "stats": data.extra(statFields()); view.queueEvent(() -> p.setting(k)); break;
             default: view.queueEvent(() -> p.setting(k));
@@ -235,7 +291,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         root.removeView(old);
         newScene();
         if (!started || slept) view.onPause();
-        else view.queueEvent(() -> stage.setVisible(true));
+        else view.queueEvent(() -> stage.setVisible(glWanted()));
         ui.panel.refresh("");
     }
     private void applyBar() {
@@ -261,9 +317,168 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             case "plates": plates(); break;
             case "achReset": tro.reset(); ui.toast("成就记录清空了", 2600); break;
             case "bgUse": if (Background.has(this)) S.set("bg", "image"); else pick(PICK_BG, "image/*"); break; // 没存过图片：先选一张
+            case "checkUpdate": checkUpdate(); break; // 设置页「当前版本」行：检查更新
             default: view.queueEvent(() -> p.setting("act:" + name));
         }
     }
+    /** 设置页「当前版本」：检查远端是否有新版本 */
+    private void checkUpdate() {
+        ui.toast("正在检查更新…", 1500);
+        Updater.check(this, new Updater.CheckCb() {
+            @Override public void onLatest() { ui.toast("已是最新版本", 2200); }
+            @Override public void onUpdate(String remoteName, String notes) { showUpdateDialog(remoteName, notes); }
+            @Override public void onError(String msg) { ui.toast(msg, 3500); }
+        });
+    }
+    private AlertDialog updateDlg;
+    /** 发现新版本：圆角弹窗（和设置页卡片同款圆角），左取消 / 右更新，显示更新日志；点更新后显示下载进度；下完先自动弹一次安装界面，未装返回后可用「安装」按钮手动再装 */
+    private void showUpdateDialog(String remoteName, String notes) {
+        if (updateDlg != null && updateDlg.isShowing()) return;
+        // 圆角卡片背景（和设置页卡片一致：160° 深色渐变 + 细描边 + 0.32rem 圆角）
+        GradientDrawable cardBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xf5262a34, 0xf70f1116});
+        cardBg.setCornerRadius(px(0.32f));
+        cardBg.setStroke(Math.max(1, Math.round(dens())), 0x14ffffff);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(16), dp(20), dp(16));
+
+        TextView title = new TextView(this);
+        title.setText("发现新版本");
+        title.setTextColor(0xffeef1f6); title.setTextSize(18);
+        title.setTypeface(Typeface.create(Typeface.DEFAULT, 700, false));
+        title.setPadding(0, 0, 0, dp(8));
+        content.addView(title);
+
+        TextView msg = new TextView(this);
+        msg.setText("当前 V" + Updater.localName(this) + " → 新版本 V" + remoteName + "\n是否现在更新？");
+        msg.setTextColor(0xffeef1f6); msg.setTextSize(16);
+        content.addView(msg);
+
+        // 更新日志（有内容才显示）：当前版本高亮，历史版本灰色小字；超出可在日志区内滚动
+        String[] seg = Updater.splitNotes(notes, remoteName);
+        String cur = seg[0], hist = seg[1];
+        {
+            TextView ltitle = new TextView(this);
+            ltitle.setText("更新日志");
+            ltitle.setTextColor(0xff8fd3ff); ltitle.setTextSize(13);
+            ltitle.setPadding(0, dp(10), 0, dp(4));
+            ltitle.setTypeface(Typeface.create(Typeface.DEFAULT, 700, false));
+            content.addView(ltitle);
+            ScrollView sv = new ScrollView(this);
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            if (!cur.isEmpty()) {
+                TextView lt = new TextView(this);
+                lt.setText(cur);
+                lt.setTextColor(0xffeef1f6); lt.setTextSize(14);
+                lt.setLineSpacing(dp(3), 1f);
+                box.addView(lt);
+            }
+            if (!hist.isEmpty()) {
+                TextView ht = new TextView(this);
+                ht.setText("历史版本\n" + hist);
+                ht.setTextColor(0x88aab4c4); ht.setTextSize(12);
+                ht.setLineSpacing(dp(2), 1f);
+                ht.setPadding(0, dp(8), 0, 0);
+                box.addView(ht);
+            }
+            if (cur.isEmpty() && hist.isEmpty()) { // 没拉到日志：说清楚，别留一片空白让人以为没有日志
+                TextView nt = new TextView(this);
+                nt.setText("暂时没取到更新日志（网络不通时会出现，联网后重新点「当前版本」即可）");
+                nt.setTextColor(0x88aab4c4); nt.setTextSize(12);
+                nt.setLineSpacing(dp(2), 1f);
+                box.addView(nt);
+            }
+            sv.addView(box);
+            // 高度按行数估算并封顶（超出可在日志区内滚动）
+            int lines = ((cur.isEmpty() ? 0 : cur.split("\n").length) + (hist.isEmpty() ? 0 : hist.split("\n").length)) + 2;
+            int hpx = Math.min(dp(200), Math.max(dp(46), lines * dp(21)));
+            sv.setLayoutParams(new LinearLayout.LayoutParams(-1, hpx));
+            content.addView(sv);
+        }
+        ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pb.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        pb.setMax(100); pb.setProgress(0); pb.setVisibility(View.GONE);
+        content.addView(pb);
+        TextView ptxt = new TextView(this);
+        ptxt.setText(""); ptxt.setTextColor(0x99eef1f6); ptxt.setTextSize(13); ptxt.setPadding(0, dp(6), 0, 0);
+        ptxt.setVisibility(View.GONE);
+        content.addView(ptxt);
+
+        // 按钮栏（和设置页 .act 同款：取消=描边，更新=蓝底实心）
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.END);
+        bar.setPadding(0, dp(12), 0, 0);
+        TextView cancelBtn = makeDlgBtn("取消", false);
+        TextView actionBtn = makeDlgBtn("更新", true);
+        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, -2);
+        alp.leftMargin = dp(12);
+        bar.addView(cancelBtn);
+        bar.addView(actionBtn, alp);
+        content.addView(bar);
+
+        AlertDialog d = new AlertDialog.Builder(this)
+            .setView(content)
+            .create();
+        d.setCanceledOnTouchOutside(false); // 只在「取消」按钮或返回键关闭，点外面不关，避免误关更新确认框
+        d.show();
+        // 透明窗口 + 清掉对话框自带面板背景，只露我们的圆角卡片
+        if (d.getWindow() != null) {
+            d.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            stripBg(d.getWindow().getDecorView());
+        }
+        content.setBackground(cardBg);
+
+        cancelBtn.setOnClickListener(v -> d.dismiss());
+        final TextView fab = actionBtn;
+        actionBtn.setOnClickListener(v -> {
+            fab.setEnabled(false);
+            pb.setVisibility(View.VISIBLE); ptxt.setVisibility(View.VISIBLE); ptxt.setText("下载中…");
+            Updater.downloadAndInstall(MainActivity.this, new Updater.DownCb() {
+                @Override public void onProgress(int p) {
+                    if (p >= 0) { if (pb.isIndeterminate()) { pb.setIndeterminate(false); } pb.setProgress(p); ptxt.setText(p + "%"); }
+                    else { pb.setIndeterminate(true); ptxt.setText("下载中…"); }
+                }
+                @Override public void onDone() {
+                    // 下载完成：先自动弹一次系统安装界面；若用户没装就返回，按钮变「安装」可手动再装
+                    ptxt.setText("下载完成，正在弹出安装…");
+                    fab.setText("安装");
+                    fab.setEnabled(true);
+                    fab.setOnClickListener(iv -> Updater.install(MainActivity.this));
+                    Updater.install(MainActivity.this);  // 第一次自动安装
+                }
+                @Override public void onError(String m) { ptxt.setText(m); }
+            });
+        });
+        updateDlg = d;
+    }
+    /** 对话框按钮（.act 风格）：pri=蓝底实心，否则描边 */
+    private TextView makeDlgBtn(String text, boolean pri) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextSize(15);
+        b.setTextColor(pri ? 0xffffffff : 0xffeef1f6);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(20), dp(10), dp(20), dp(10));
+        GradientDrawable gb = new GradientDrawable();
+        gb.setCornerRadius(px(0.3f));
+        if (pri) gb.setColor(0xff5b8cff);
+        else { gb.setColor(0x0fffffff); gb.setStroke(Math.max(1, Math.round(dens())), 0x29ffffff); }
+        b.setBackground(gb);
+        return b;
+    }
+    /** 递归把视图背景清空（透明窗口下只留我们自己的圆角卡片） */
+    private static void stripBg(View v) {
+        if (v == null) return;
+        v.setBackgroundDrawable(null);
+        if (v instanceof ViewGroup) { ViewGroup g = (ViewGroup) v; for (int i = 0; i < g.getChildCount(); i++) stripBg(g.getChildAt(i)); }
+    }
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+    private float px(float f) { return f * getResources().getDisplayMetrics().heightPixels / 10.52f; }
+    private float dens() { return getResources().getDisplayMetrics().density; }
+
     private void pick(int code, String type) {
         try { startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(type), code); }
         catch (Exception e) { ui.toast("这台车机打不开选文件的界面", 3500); }
@@ -395,8 +610,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             ui.setVisibility(View.VISIBLE);
             ui.animate().alpha(1).setDuration(250).start();
             final Stage st = stage;
-            final boolean vis = started && !slept;
-            view.queueEvent(() -> st.setVisible(vis));
+            view.queueEvent(() -> st.setVisible(glWanted()));
         });
         ui.animate().alpha(0).setDuration(200).withEndAction(() -> { if (achP.isOpen()) ui.setVisibility(View.INVISIBLE); }).start();
         final Stage st = stage;
@@ -412,19 +626,65 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override public void tagMax(float y) { final CarPage p = page; view.queueEvent(() -> p.setTagMax(y)); }
     @Override public void panel(boolean open) { final CarPage p = page; view.queueEvent(() -> p.focus(open)); }
     /** 音乐卡片开关：开着也订阅媒体（调试宿主下才有歌），关了恢复按氛围灯模式决定。
-     *  音乐卡片只换车模显示区：GL 视图保持可见（背景渐变/图片和车模页一致），只藏车模本体。dir：-1 车模从右滑回，+1 从左滑回，0 弹回 */
+     *  同级页面：车模页与音乐页左右交叉滑动——Hud 把音乐层右进、整层 GL 表面左出（pageOffset 驱动），
+     *  停在音乐页时整个 GL 停画（车模和车况背景一起不渲染）。 */
     @Override public void musicCard(boolean on, int dir) {
         final CarPage p = page;
         p.setCardMusic(on, dir);
+        musicPageOn = on;
+        // GL 停画交给 Hud.onPageOffset 按 pageOffset 实时决定（拖拽/滑动途中保持渲染，停在音乐页才停），
+        // 不再用「进音乐页 300ms 后停画」的延时器——否则拖拽回车模页时会被它把 GL 又关掉、车模拖回途中空白
         boolean vis = started && !slept;
         data.use(vis, vis && p.wantsMedia());
     }
     /** 播放控制命令（play/pause/next/previous/togglePlayPause） */
     @Override public void music(String action) { data.mediaCmd(action); }
-    /** 封面：coverUrl 是会话绑定的资源标识，走 openCover（不是 HTTP 下载），解码完回 ui.coverReady 上屏 */
-    @Override public void loadCover(String url) { data.loadCover(url, b -> ui.coverReady(url, b)); }
+    /** 封面：coverUrl 是会话绑定的资源标识，走 openCover（不是 HTTP 下载），解码完回调（由调用方用序号丢弃过期结果） */
+    @Override public void loadCover(String url, CarData.CoverCb cb) { data.loadCover(url, cb); }
     /** 换歌了拉整首歌词 */
-    @Override public void musicLyrics() { data.mediaLyrics(l -> ui.setLyrics(l)); }
+    @Override public void musicLyrics() { data.mediaLyrics(ui.hud.trackId(), l -> ui.setLyrics(l)); }
+
+    // ================= 点封面：打开正在放歌的那个 App =================
+    /** 点封面打开音源 App：宿主原生动作 apps.launch（参数是包名）。
+      按宿主的挂法逐级回退：① apps.launch（规范方式）；② 通用动作通道 actions.runSequence；
+      ③ Android 原生 PackageManager 启动（车机上最直接的一条路，宿主不给用时兜底）。
+      这三条都没有才算失败，提示说清为什么。 */
+    @Override public void launchApp() {
+        final String pkg = ui.hud.mediaPkg();
+        if (pkg == null || pkg.isEmpty()) { ui.toast("还不知道这首是从哪个 App 放的", 2500); return; }
+        final String name = Hud.srcName(pkg);
+        if (!host.canExec()) { authorize(); ui.toast("要先在宿主里允许「执行操作」", 3000); return; }
+        try {
+            host.request("apps.launch", new JSONObject().put("packageName", pkg), (r, code, msg) -> {
+                if (code == null) { ui.toast("正在打开" + name, 2000); return; }
+                launchSeq(pkg, name, code, msg);
+            });
+        } catch (Exception e) { launchNative(pkg, name); }
+    }
+    /** 回退②：通用动作通道 actions.runSequence（里面只放 apps.launch 一步） */
+    private void launchSeq(final String pkg, final String name, String c1, String m1) {
+        try {
+            JSONObject step = new JSONObject().put("method", "apps.launch").put("params", new JSONObject().put("packageName", pkg));
+            JSONObject steps = new JSONObject().put("steps", new JSONArray().put(step));
+            host.request("actions.runSequence", steps, (r, code, msg) -> {
+                if (code == null) { ui.toast("正在打开" + name, 2000); return; }
+                launchNative(pkg, name);
+            });
+        } catch (Exception e) { launchNative(pkg, name); }
+    }
+    /** 回退③：Android 原生启动（宿主两条路都不认时用；这台车机上装了就能起） */
+    private void launchNative(String pkg, String name) {
+        try {
+            android.content.Intent it = getPackageManager().getLaunchIntentForPackage(pkg);
+            if (it != null) {
+                it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(it);
+                ui.toast("正在打开" + name, 2000);
+                return;
+            }
+        } catch (Exception ignored) { }
+        ui.toast("打不开" + name, 3000);
+    }
     /** 车顶空调键：宿主的原生操作 vehicle.ac.setPower（不用车主确认）；失败交回车况页（变回去、说原因） */
     @Override public void acSet(boolean on) {
         final CarPage p = page;

@@ -11,6 +11,6 @@ await build({
   KS: path.join(HERE, 'release.keystore'),
   ASSETS: path.join(HERE, 'assets'),
   noCompress: ["ttf","glb"], // 不压缩的扩展名：系统直接映射着读，不用整个解压进内存
-  tk: tools(),
+  tk: tools({ BT: "D:/Program Files/WorkBuddyCache/apk_work/build-tools/android-14", JAR: "D:/Program Files/WorkBuddyCache/apk_work/sdk/platforms/android-34/android.jar", JDK: "D:/Program Files/WorkBuddyCache/apk_work/jdk/jdk-17.0.20.1+1" }),
   install: process.argv.includes('--install'),
 });

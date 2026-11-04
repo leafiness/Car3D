@@ -1602,40 +1602,34 @@ final class CarPage implements Stage.Page {
         if (p != playing) { playing = p; if (app != null && musicOn) app.invalidate(); }
         if (out != null) out.media(m);
     }
-    /** 音乐卡片开着：也想要媒体订阅（调试宿主下才有歌）。开时立刻藏车模（不等动画，防竞态漏藏）、背景照常画；
-     *  关时车模按滑动方向从侧面滑回（dir：+1 从左、-1 从右、0 原地弹回） */
+    /** 音乐卡片开着：也想要媒体订阅（调试宿主下才有歌）。
+     *  进音乐页：车模顺着卡片方向滑出、动画结束才藏（不直接藏，否则「啪」地消失、切页不跟手）；背景照常画。
+     *  回车模页：车模从当前位置滑回中心。dir 与 Hud 卡片同向：+1 往左出/从左回，-1 往右出/从右回，0 原地弹回（进页与回页同侧） */
     void setCardMusic(boolean on, int dir) {
         if (on == cardMusic) return;
         cardMusic = on;
         if (needs != null) needs.run();
-        if (root != null) {
-            if (carAnim != null) carAnim.cancel();
-            root.visible = !on; // 立刻藏/显：不依赖动画结束回调（偶现 cancel/end 时序竞态会漏藏）
-            if (on) { root.scale.set(1, 1, 1); root.position.x = 0; carAniming = false; }
-            else { // 回车模页：按方向从侧面滑回 + 轻微弹回，一起收尾
-                float x0 = dir == 0 ? 0 : -dir * slideDist(), s0 = dir == 0 ? 0.9f : 1;
-                carAniming = true; // 动画期间冻结充电桩 tick（见 update 里的说明）
-                carAnim = new android.animation.ValueAnimator();
-                carAnim.setFloatValues(0, 1);
-                carAnim.setDuration(300);
-                carAnim.setInterpolator(new android.view.animation.DecelerateInterpolator());
-                carAnim.addListener(new android.animation.AnimatorListenerAdapter() {
-                    @Override public void onAnimationEnd(android.animation.Animator a) { carAniming = false; }
-                });
-                carAnim.addUpdateListener(a -> {
-                    float t = (Float) a.getAnimatedValue();
-                    if (root != null) { root.scale.set(s0 + (1 - s0) * t, s0 + (1 - s0) * t, s0 + (1 - s0) * t); root.position.x = x0 * (1 - t); }
-                    if (app != null) app.invalidate();
-                });
-                carAnim.start();
-            }
-        }
+        if (root != null) root.visible = true; // 车模显示交由整层 GL 表面平移 + 停画决定；滑动途中也要可见，所以始终 true
         if (app != null) app.invalidate(); // 强制重画一帧：否则「没变不重画」会让最后一帧一直留着
     }
-    private android.animation.ValueAnimator carAnim;
-    private boolean carAniming; // 切页滑回动画进行中：冻结充电桩 tick，防止枪/线缆几何用动画中的世界矩阵烘焙
-    /** 车模横向滑入距离（约 0.6 个车宽的世界单位） */
-    private float slideDist() { return Math.max(3f, dimsHw * 1.2f); }
+    /** 同级页面相位（0=车模页、1=音乐页，且可越过 1/0 循环：相位 ph∈[0,2)，车模页在偶数、音乐页在奇数）。
+     *  只把车模本身随页相位交叉滑动，车况背景 Bg 保持满屏固定（不随表面平移），
+     *  这样音乐背景半透明淡入时下方始终是车况背景、不会有「整层平移露出黑底」的亮暗缝。
+     *  c = 折算到 [-1,1] 的带符号相位：c=0 车模居中、c=±1 音乐页（车模滑出左/右外）。
+     *  滑完(|c|≥0.985)才藏车模；阴影不随页重烘焙（退回 0.6.0：阴影留在车模型投影处）。 */
+    void setPageOffset(float ph) {
+        if (root == null) return;
+        float c = (ph <= 1f) ? ph : ph - 2f;     // 折回 [-1,1]：ph∈[0,1]→[0,1]，ph∈[1,2)→(-1,0]
+        float ad = Math.abs(c);
+        root.visible = ad < 0.985f;               // 停音乐页（|c|≈1）才藏车模；滑动途中始终可见
+        float d = Math.max(3f, dimsHw * 2.6f);    // 滑出距离：|c|=1 时车模整体移出屏幕左/右外
+        root.position.x = -c * d;                 // 车模交叉滑动：c=0 居中、c>0 往左出、c<0 从右回
+        float s = 1f - 0.2f * ad;                 // 轻微缩小，像退向远处，过渡更自然
+        root.scale.set(s, s, s);
+        // 退回 0.6.0：页切换不重烘焙阴影，阴影留在车模型投影处（光在 scene 里不随 root 平移）
+        if (app != null) app.invalidate();        // 滑动途中让 GL 继续出帧，车模跟着平移
+    }
+    // 同级页面切换下，车模不再单独滑出（整层 GL 表面随 pageOffset 平移），故无需 carAnim / carAniming / slideDist / endCar
     /** 当前是不是停在音乐卡片这一页（3D 拖动/点按在这页不生效） */
     @Override public boolean cardMusic() { return cardMusic; }
     boolean wantsMedia() { return musicOn || cardMusic; }
@@ -1879,7 +1873,7 @@ final class CarPage implements Stage.Page {
         }
         out.stats(items);
     }
-    CarStat.UnitOf unitOf = f -> null;
+    CarStat.UnitOf unitOf; // 由 MainActivity 注入真实实现（data::unit）；红绿灯实验分支遗留的 null stub 已移除
     /** 电量 / 油量：[id, 名字, 数, 单位, 进度条比例, 进度条颜色类] */
     private static String[] energy(String id, String label, Double v) {
         boolean ok = v != null;
@@ -2013,7 +2007,7 @@ final class CarPage implements Stage.Page {
     private float bgK = -1;
     @Override public int update(float dt) {
         if (root == null) return 0;
-        if (cardMusic && root.visible) { root.visible = false; if (app != null) app.invalidate(); } // 保险：音乐页上车模绝不能显示（任何路径漏藏这里兜住）
+        // 同级页面切换：车模隐藏交由整层 GL 表面平移（pageOffset→setTranslationX）与停画负责，这里不再单独藏 root（否则滑出途中会把车模掐没）
         boolean moving = false;
         for (Map.Entry<String, Float> e : want.entrySet()) {
             String k = e.getKey();
@@ -2023,7 +2017,7 @@ final class CarPage implements Stage.Page {
             cur.put(k, a);
         }
         boolean chgAnim = false;
-        if (chg != null && !carAniming) { // 切页滑回动画期间跳过：枪/线缆几何用 pile.matrixWorld 烘焙，动画中的矩阵会被烘进永久偏移
+        if (chg != null) { // 充电桩 tick（旧版切页滑回时冻结，新版整层平移不走世界矩阵烘焙，无需冻结）
             int ca = chg.tick(dt, themeK);
             if (ca == 2) { moving = true; shadowDirty = true; } else if (ca == 1) chgAnim = true;
             if (chg.wanted() != chgOn) { // 插上枪：镜头转到看充电桩的角度；拔掉：转回来（手指转过车就不管）

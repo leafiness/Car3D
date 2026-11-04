@@ -92,13 +92,23 @@ final class Settings {
         NUM.put("dAz", new float[] { -3.15f, 3.15f, 0.01f, (float) Math.PI });
         NUM.put("dEl", new float[] { 0.04f, 1.3f, 0.01f, 1.08f });
         NUM.put("dZoom", new float[] { 0.7f, 1.4f, 0.05f, 1 });
-        // 音乐卡片歌词：窄屏/宽屏各自记行数与字号档位（字符串设置，配分段按钮，见 LYR_ROWS / LYR_FONT）
+        // 音乐卡片歌词：窄屏/宽屏各自记行数与字号（同网页版 lyricLines / lyricSize，绝对值，不再单独设行间距）
     }
-    /** 歌词行数 / 字号的可选档位（步进器用） */
-    static final List<String> LYR_ROWS = Arrays.asList("3", "4", "5", "6", "7", "8");
-    static final List<String> LYR_FONT = Arrays.asList("0.9", "1.0", "1.2", "1.5", "1.8", "2.2", "2.6", "3.0");
+    /** 歌词行数 / 字号的可选档位（步进器用）。字号是绝对值：数值即百分之一 rem（同网页版 lyricSize，14~52），行高 = 字号 × 1.42 固定（网页版 line-height，不再单独设行间距） */
+    static final List<String> LYR_ROWS = Arrays.asList("1", "2", "3", "4", "5", "6", "7", "8"); // 歌词最多 8 行
+    static final List<String> LYR_SIZE = Arrays.asList("14", "16", "18", "20", "22", "23", "24", "26", "27", "30", "34", "38", "42", "46", "50", "52");
+    // 音乐卡片背景（参考网页版车机音乐卡片：两级——先选大类，再选那一类里的具体项）
+    static final List<String> MBG_MODE = Arrays.asList("theme", "fixed", "cover");
+    static final String[] MBG_MODE_NAMES = { "深浅模式", "固定色", "跟随封面" };
+    static final List<String> MBG_COVER = Arrays.asList("solid", "blend", "breath", "flow", "glow");
+    static final String[] MBG_COVER_NAMES = { "纯色", "模糊+主色", "模糊呼吸", "双色流动", "主色光晕" };
+    /** 固定背景色的预设色板（同网页版，给的是最终底色，不再被压暗）：{ hex, 名称 } */
+    static final List<String[]> MBG_COLORS = Arrays.asList(
+        new String[] { "#2b4a7d", "深蓝" }, new String[] { "#22262e", "墨黑" }, new String[] { "#1e5540", "墨绿" },
+        new String[] { "#6b2a41", "酒红" }, new String[] { "#14576b", "青蓝" }, new String[] { "#5c3d1e", "暖棕" },
+        new String[] { "#16202e", "夜蓝" }, new String[] { "#dfe6ef", "月白" }, new String[] { "#8a5cc4", "紫罗兰" });
     static final List<String> VIEW = Arrays.asList("viewAz", "viewEl", "viewZoom", "viewFov"), DVIEW = Arrays.asList("dAz", "dEl", "dZoom");
-    static final List<String> BOOL = Arrays.asList("labels", "intro", "aa", "fsBar", "hour24", "showSec", "secHideNarrow");
+    static final List<String> BOOL = Arrays.asList("labels", "intro", "aa", "fsBar", "hour24", "showSec", "secHideNarrow", "testBuild");
     static final Map<String, String> HEX = new LinkedHashMap<>();
     static { HEX.put("paintHex", "#3a7bd5"); HEX.put("rimHex", "#b8bcc4"); HEX.put("calHex", "#2bb673"); }
 
@@ -114,7 +124,13 @@ final class Settings {
     Settings(Context c) {
         prefs = c.getSharedPreferences("d3", Context.MODE_PRIVATE);
         load();
+        inst = this; // 全局实例：Updater 要读「测试版更新」开关的生效值
     }
+    /** 当前实例（全局单例）：Updater 读开关要用「生效值」（含默认值），
+     *  直接读 prefs 原始 JSON 会漏掉默认值（prefs 里没这个键时 optBoolean 给 false），
+     *  导致测试版 APK 覆盖安装后仍走正式通道。 */
+    private static Settings inst;
+    static Settings inst() { return inst; }
     private static Map<String, Object> defs() {
         Map<String, Object> d = new LinkedHashMap<>();
         d.put("paint", "red"); d.put("rim", "silver"); d.put("caliper", "red"); d.put("finish", "preset");
@@ -122,10 +138,14 @@ final class Settings {
         d.put("theme", "auto"); d.put("bg", "studio"); d.put("bgDim", 0.25f);
         d.put("viewAz", -0.72f); d.put("viewEl", 0.2f); d.put("viewZoom", 1f); d.put("viewFov", 27f);
         d.put("dAz", (float) Math.PI); d.put("dEl", 1.08f); d.put("dZoom", 1f);
-        d.put("lyrRowsP", "5"); d.put("lyrRowsL", "5"); d.put("lyrFontP", "1.0"); d.put("lyrFontL", "1.0");
+        d.put("lyricLinesP", "5"); d.put("lyricLinesL", "8"); d.put("lyricSizeP", "23"); d.put("lyricSizeL", "27");
+        // 音乐卡片背景（与车模卡片背景 bg 分开记）：两级——大类 mBgMode，再选具体项 mBgCover / mBgColor
+        d.put("mBgMode", "cover"); d.put("mBgCover", "solid"); d.put("mBgColor", "#16202e");
         d.put("stats", Arrays.asList("bat", "fuel", "range", "eRange", "temp", "odo"));
+        d.put("tells", Arrays.asList("belt", "heat", "vent", "ac", "defF", "defR", "mute", "modes", "regen", "sim", "save", "wc", "rpm", "pm", "slope", "high", "fogF", "fogR", "hazard", "brake", "lowV", "key"));
         d.put("labels", true); d.put("intro", true); d.put("quality", "eco"); d.put("fps", "60"); d.put("aa", false); d.put("fsBar", false);
         d.put("hour24", true); d.put("showSec", false); d.put("secHideNarrow", true);
+        d.put("testBuild", false); // 正式分支默认关：APK 默认走正式更新通道、显示正式日志；设置里仍可手动打开「测试版更新」开关切到测试通道
         return d;
     }
     private static boolean ok(String k, Object v) {
@@ -136,7 +156,14 @@ final class Settings {
             if (!(v instanceof List)) return false;
             List<?> l = (List<?>) v;
             if (l.isEmpty() || l.size() > 6) return false;
-            for (int i = 0; i < l.size(); i++) if (l.indexOf(l.get(i)) != i || CarStat.byId(String.valueOf(l.get(i))) == null) return false;
+            for (int i = 0; i < l.size(); i++)             if (l.indexOf(l.get(i)) != i || CarStat.byId(String.valueOf(l.get(i))) == null) return false;
+            return true;
+        }
+        if ("tells".equals(k)) {
+            if (!(v instanceof List)) return false;
+            List<?> l = (List<?>) v;
+            if (l.size() > CarStat.TELLS.length) return false;
+            for (Object o : l) if (!CarStat.tellsId(String.valueOf(o))) return false;
             return true;
         }
         if (OPTS.containsKey(k)) { for (Opt o : OPTS.get(k)) if (o.id.equals(v)) return true; return false; }
@@ -145,8 +172,11 @@ final class Settings {
         if ("bg".equals(k)) return BGS.contains(v);
         if ("quality".equals(k)) return QUAL.containsKey(v);
         if ("fps".equals(k)) return FPS.contains(v);
-        if ("lyrRowsP".equals(k) || "lyrRowsL".equals(k)) return LYR_ROWS.contains(v);
-        if ("lyrFontP".equals(k) || "lyrFontL".equals(k)) return LYR_FONT.contains(v);
+        if ("lyricLinesP".equals(k) || "lyricLinesL".equals(k)) return LYR_ROWS.contains(v);
+        if ("lyricSizeP".equals(k) || "lyricSizeL".equals(k)) return LYR_SIZE.contains(v);
+        if ("mBgMode".equals(k)) return MBG_MODE.contains(v);
+        if ("mBgCover".equals(k)) return MBG_COVER.contains(v);
+        if ("mBgColor".equals(k)) return v instanceof String && ((String) v).matches("^#[0-9a-f]{6}$");
         return false;
     }
     synchronized void load() {
@@ -171,6 +201,7 @@ final class Settings {
     boolean bool(String k) { return Boolean.TRUE.equals(get(k)); }
     float num(String k) { Object v = get(k); return v instanceof Number ? ((Number) v).floatValue() : 0; }
     @SuppressWarnings("unchecked") synchronized List<String> stats() { return new ArrayList<>((List<String>) s.get("stats")); }
+    @SuppressWarnings("unchecked") synchronized List<String> tells() { return new ArrayList<>((List<String>) s.get("tells")); }
 
     /** 改一项（不合法、没变就不动）；通知订阅的人 */
     void set(String k, Object v) {

@@ -83,8 +83,15 @@ final class CarData {
     }
     private static final Map<String, Map<Integer, String>> UNIT_NAME = new HashMap<>();
     static {
-        Map<Integer, String> a = new HashMap<>(); a.put(1, "kW/100km"); a.put(2, "kW/100mi"); a.put(3, "hp/100km"); a.put(4, "hp/100mi"); UNIT_NAME.put("energy.consumption.averageElectric", a);
-        Map<Integer, String> b = new HashMap<>(); b.put(1, "L/100km"); b.put(2, "km/L"); b.put(3, "mpg"); b.put(4, "L/h"); UNIT_NAME.put("energy.consumption.instantFuel", b);
+        // 电耗 / 油耗单位（uiplus 接口规范：能耗字段单位经 unitOf 解析）
+        Map<Integer, String> kwh = new HashMap<>(); kwh.put(1, "kWh"); kwh.put(2, "kWh"); kwh.put(3, "kWh"); kwh.put(4, "kWh");
+        Map<Integer, String> ltr = new HashMap<>(); ltr.put(1, "L"); ltr.put(2, "L"); ltr.put(3, "L"); ltr.put(4, "L");
+        UNIT_NAME.put("energy.consumption.averageElectric", kwh);
+        UNIT_NAME.put("energy.consumption.recentElectric", kwh);
+        UNIT_NAME.put("energy.consumption.instantElectric", kwh);
+        UNIT_NAME.put("energy.consumption.averageFuel", ltr);
+        UNIT_NAME.put("energy.consumption.recentFuel", ltr);
+        UNIT_NAME.put("energy.consumption.instantFuel", ltr);
         Map<Integer, String> c = new HashMap<>(); c.put(1, "km"); c.put(2, "mi"); UNIT_NAME.put("driving.journeyDistance", c);
     }
     private static final double RANGE_BAD = 2046;
@@ -96,6 +103,10 @@ final class CarData {
     private final Map<String, String> units = new HashMap<>();
     private final JSONObject tree = new JSONObject(), stree = new JSONObject();
     private JSONObject media;
+    // 已上屏的曲目号与时间戳：换歌（trackId 变了）必须立即上屏，同一首歌才按 updatedAt 去重，
+    // 避免旧快照（上一首的进度回灌、或新歌首帧时间戳略小）被误丢或误覆盖
+    private String appliedTid = "";
+    private long appliedUa = -1;
     private Map<String, String> caps;
     private List<String> fields = FIELDS, extra = new ArrayList<>();
     private boolean wantCar, wantMedia;
@@ -218,27 +229,59 @@ final class CarData {
     }
     /** 发一个媒体控制命令（play/pause/next/previous/togglePlayPause） */
     void mediaCmd(String action) { try { host.request("media." + action, new JSONObject(), null); } catch (Exception ignored) { } }
-    /** 拉整首歌词（行列表）；拿不到返回空列表 */
-    interface LyricsCb { void on(List<String> lines); }
-    void mediaLyrics(LyricsCb cb) {
+    /** 拉整首歌词（行列表）；拿不到返回空列表。歌词可能迟到：结果带的 trackId 对不上当前曲目就不采用，空/过期结果间隔重试几次 */
+    /** 一行歌词：文本 + 这句在整首里的开始时间（timeMs，宿主没给是 -1）。
+     *  照琉光 MediaState：有了每句时间才能「下一句和这句一模一样时按时间自己往下走」、以及按播放位置兜底定位。 */
+    static final class LyLine {
+        final String t; final long at;
+        LyLine(String t, long at) { this.t = t; this.at = at; }
+    }
+    interface LyricsCb { void on(List<LyLine> lines); }
+    /** 一行可能是 {"text":"...","timeMs":...} 的对象，也可能直接就是歌词字符串（时间未知 -1） */
+    private static LyLine lineOf(JSONArray a, int i) {
+        JSONObject o = a == null ? null : a.optJSONObject(i);
+        if (o != null) {
+            String t = o.optString("text", "");
+            if (t.isEmpty()) t = o.optString("content", "");
+            if (t.isEmpty()) t = o.optString("words", "");
+            if (t.isEmpty()) t = o.optString("lyric", "");
+            return new LyLine(t, o.optLong("timeMs", -1));
+        }
+        return new LyLine(a == null ? "" : a.optString(i), -1);
+    }
+    private int lyricsGen = 0; // 换歌/再次拉取会让旧的重试链作废
+    void mediaLyrics(String expectTid, LyricsCb cb) {
+        int gen = ++lyricsGen;
+        fetchLyrics(expectTid == null ? "" : expectTid, cb, gen, 0);
+    }
+    private void fetchLyrics(final String expectTid, final LyricsCb cb, final int gen, final int attempt) {
         try { host.request("media.getLyrics", new JSONObject(), (r, code, msg) -> {
-            List<String> l = new ArrayList<>();
+            if (gen != lyricsGen) return; // 已有更新的拉取，这条作废
+            String rtid = r == null ? "" : r.optString("trackId", "");
+            if (rtid.equals("null")) rtid = ""; // JSONObject.NULL（宿主没给）
             JSONArray a = r == null ? null : r.optJSONArray("lines");
             if (a == null && r != null) { JSONObject d = r.optJSONObject("data"); if (d != null) a = d.optJSONArray("lines"); } // 有的宿主包一层 data
-            for (int i = 0; a != null && i < a.length(); i++) l.add(a.optString(i));
-            if (cb != null) cb.on(l);
-        }); } catch (Exception ignored) { if (cb != null) cb.on(new ArrayList<>()); }
+            List<LyLine> l = new ArrayList<>();
+            for (int i = 0; a != null && i < a.length(); i++) l.add(lineOf(a, i));
+            boolean stale = !rtid.isEmpty() && !expectTid.isEmpty() && !rtid.equals(expectTid); // 迟到的那份带着自己的曲目号，对不上就不用
+            if ((l.isEmpty() || stale) && attempt < 4) { // 歌词可能迟到，空结果不是永久失败：间隔重试
+                main.postDelayed(() -> fetchLyrics(expectTid, cb, gen, attempt + 1), 1200L * (attempt + 1));
+                return;
+            }
+            if (cb != null) cb.on(stale ? new ArrayList<>() : l);
+        }); } catch (Exception ignored) { if (gen == lyricsGen && cb != null) cb.on(new ArrayList<>()); }
     }
 
-    /** 封面回调 */
-    interface CoverCb { void on(android.graphics.Bitmap b); }
+    /** 封面回调：b 是位图（取不到为 null），hash 是内容指纹（取不到为 0），供调用方判断"是不是和上一首那张一模一样" */
+    interface CoverCb { void on(android.graphics.Bitmap b, long hash); }
 
     /** 封面：coverUrl 是会话绑定的资源标识（形如 https://media.uiplus.invalid/<token>），按规范不能发起 HTTP 下载，
      *  要在工作线程走 openCover 拿只读文件描述符解码；读取设 8MB 上限、用完关描述符 */
     void loadCover(String url, CoverCb cb) {
-        if (url == null || url.isEmpty()) { main.post(() -> cb.on(null)); return; }
+        if (url == null || url.isEmpty()) { main.post(() -> cb.on(null, 0)); return; }
         new Thread(() -> {
             android.graphics.Bitmap b = null;
+            long h = 0;
             android.os.ParcelFileDescriptor pfd = null;
             try {
                 pfd = host.openCover(url);
@@ -250,14 +293,24 @@ final class CarData {
                     while ((n = is.read(buf)) > 0 && total < 8 * 1024 * 1024) { bo.write(buf, 0, n); total += n; }
                     is.close();
                     byte[] d = bo.toByteArray();
-                    b = android.graphics.BitmapFactory.decodeByteArray(d, 0, d.length);
+                    if (d.length > 0) { b = android.graphics.BitmapFactory.decodeByteArray(d, 0, d.length); h = hashOf(d); }
                 }
             } catch (Exception ignored) {
             } finally { if (pfd != null) try { pfd.close(); } catch (Exception ignored) { } }
             final android.graphics.Bitmap bm = b;
-            main.post(() -> cb.on(bm));
+            final long fh = h;
+            main.post(() -> cb.on(bm, fh));
         }, "cover").start();
     }
+
+    /** 封面内容指纹：照琉光音乐的做法，CRC32 + 长度，用来判断"换歌后取到的还是不是上一首那张" */
+    private static long hashOf(byte[] b) {
+        if (b == null || b.length == 0) return 0;
+        java.util.zip.CRC32 c = new java.util.zip.CRC32();
+        c.update(b);
+        return (c.getValue() << 24) ^ b.length;
+    }
+
 
     private static void merge(JSONObject t, JSONObject p) {
         for (Iterator<String> it = p.keys(); it.hasNext(); ) {
@@ -320,8 +373,12 @@ final class CarData {
         out.sys(new LinkedHashMap<>(sys));
     }
     private void onMedia(JSONObject m) {
-        if (media != null && m.optLong("updatedAt") > 0 && media.optLong("updatedAt") > 0 && m.optLong("updatedAt") < media.optLong("updatedAt")) return;
-        media = "ok".equals(m.optString("status")) ? m : null;
+        if (!"ok".equals(m.optString("status"))) { media = null; appliedTid = ""; appliedUa = -1; out.media(null); return; }
+        String tid = m.optString("trackId", "");
+        long ua = m.optLong("updatedAt");
+        // 换歌（trackId 变了）立即上屏，不被 updatedAt 比较误丢；同一首歌才按时间戳去重，拦掉迟到的旧进度/重复包
+        if (tid.equals(appliedTid) && ua > 0 && appliedUa > 0 && ua <= appliedUa) return;
+        media = m; appliedTid = tid; appliedUa = ua;
         out.media(media);
     }
     Map<String, Object> car() { return new LinkedHashMap<>(car); }

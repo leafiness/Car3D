@@ -32,7 +32,8 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         void roofTap(); void acSet(boolean on); void tagMax(float cssY);
         void panel(boolean open); void act(String name); void fullscreen(); void debug(); void trophies();
         void musicCard(boolean on, int dir); void music(String action); void musicLyrics();
-        /** 封面加载：coverUrl 是会话资源标识，走 openCover（CarData 工作线程），完成后 ui.coverReady */ void loadCover(String url);
+        /** 点封面：打开正在放歌的这个 App（宿主 apps.launch） */ void launchApp();
+        /** 封面加载：coverUrl 是会话资源标识，走 openCover（CarData 工作线程），完成后回调（用序号丢弃过期结果） */ void loadCover(String url, CarData.CoverCb cb);
     }
     /** 深浅色变了：d 是要到的，k 是现在过渡到哪（成就墙跟着变） */
     interface Theme { void on(boolean d, float k); }
@@ -59,10 +60,18 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private String fsMode = "";
     private JSONObject mediaNow;
     private String lastTrackId = "";
-    private String coverNow = "";
-    private android.graphics.Bitmap coverBm;
+    private String covUrl = "", covTid = ""; // 当前正在显示的封面地址与它对应的曲目（uiplus 规范：coverUrl 即真相，不做曲目→封面缓存）
+    private int covSeq = 0;                   // 换图序号：期间又推了新地址/切了歌，旧加载结果就丢弃
+    private long coverHash = Long.MIN_VALUE;  // 认准的那张封面的内容指纹（没封面/取不到时为 MIN_VALUE）
+    private String hashTid = "";              // 指纹对应的曲目
+    private long trackAt;                     // 最近一次换歌时刻（判断"换歌后极短时间"用）
+    private static final long COVER_WAIT = 3000; // 换歌后宿主常还用上一首封面，最多等这么久
+    private Runnable coverRetry;              // 待执行的封面重取任务
+    private int coverFailCount;               // 连续取不到的次数（限重试，避免死循环）
+
     private boolean panelOn;
     private boolean cardOn;
+    private boolean blocked; // 连不上宿主/未授权：胎压标签随相位计算时强制藏掉
 
     CarUi(Context c, Settings s, Actions a) {
         super(c);
@@ -78,19 +87,26 @@ final class CarUi extends FrameLayout implements CarPage.Out {
             @Override public void card(boolean fromRight) {
                 cardOn = !cardOn;
                 hud.setMusic(cardOn, fromRight);
-                tags.setVisibility(cardOn ? GONE : VISIBLE); // 胎压标签浮层画在 Hud 之上，音乐页要整层藏掉
+                setPagePhase(cardOn ? 1f : 0f); // 胎压标签随页相位淡出：车模页全显、音乐页藏掉（与 Hud 车况 UI 同步）
                 if (act != null) {
-                    act.musicCard(cardOn, fromRight ? -1 : 1); // dir：-1 车模从右滑回，+1 从左滑回
+                    act.musicCard(cardOn, fromRight ? 1 : -1); // 车模与卡片同向滑动：fromRight→往左出/从左回，反向→往右出/从右回
                     if (cardOn) act.musicLyrics(); // 打开时补拉一次歌词
                 }
             }
+            @Override public void pageTo(boolean on) {
+                cardOn = on;
+                hud.setMusic(on, false);                 // 设 musicOn + 从当前 pageOffset 回弹动画到目标
+                setPagePhase(on ? 1f : 0f); // 胎压标签随页相位淡出：车模页全显、音乐页藏掉（与 Hud 车况 UI 同步）
+                if (act != null) {
+                    act.musicCard(on, on ? -1 : 1);       // 方向已无意义（整层平移取代单模型滑动）
+                    if (on) act.musicLyrics();            // 打开时补拉一次歌词
+                }
+            }
             @Override public void music(String a) { if (act != null) act.music(a); }
+            @Override public void launchApp() { if (act != null) act.launchApp(); }
         });
         hud.onMsgTop = () -> act.tagMax(hud.msgTop / dens);
-        // 红绿灯数据源（实验分支）：默认 Sim 模拟；AmapConfig.ENABLED=true 且集成高德 SDK 时走真实数据
-        TrafficLightSource ts = AmapConfig.ENABLED ? new AmapTraffic() : new SimTraffic();
-        ts.attach(c);
-        hud.setTrafficLightSource(ts);
+        hud.onTint = this::colors; // 音乐背景明暗变化 / 进出音乐页时，让右上角按钮跟着换色
         tags = new Tags(c, hud, act::roofTap);
         addView(hud, new LayoutParams(-1, -1));
         addView(tags, new LayoutParams(-1, -1));
@@ -119,6 +135,7 @@ final class CarUi extends FrameLayout implements CarPage.Out {
             @Override public void closed() { panelOn = false; buttons(); act.panel(false); }
         });
         addView(panel, new LayoutParams(-1, -1));
+        panel.setDarkKProvider(() -> hud.darkK()); // 「跟随车机」模式按车机当前明暗上色
         busy = new Busy(c);
         addView(busy, new LayoutParams(-1, -1));
         colors();
@@ -138,8 +155,16 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     void infoOpen(boolean on) { infoOn = on; buttons(); }
     /** 连不上宿主、没授权时（上面盖着说明）：字和标签藏起来，齿轮照常能用 */
     void setBlocked(boolean b) {
+        blocked = b;
         hud.animate().alpha(b ? 0 : 1).setDuration(300).start();
-        tags.animate().alpha(b ? 0 : 1).setDuration(300).start();
+        setPagePhase(hud.pagePhase()); // 重算胎压标签：连不上宿主时按 blocked 强制藏掉
+    }
+    /** 胎压标签随页面相位淡出：车模页(ph=0/2)全显、音乐页(ph=1)全隐，与 Hud 车况 UI 同步，避免滑到音乐页残留标签 */
+    void setPagePhase(float ph) {
+        float carVis = Math.abs(ph - 1f);           // 1=车模页全显、0=音乐页全隐
+        float a = blocked ? 0f : carVis;
+        tags.setAlpha(a);
+        tags.setVisibility(a < 0.02f ? View.GONE : View.VISIBLE);
     }
     /** 全屏键："full" 全屏、"small" 恢复小屏、"" 没有（同 fullscreen.js：在全屏页里是恢复小屏） */
     void setFsMode(String m) {
@@ -169,6 +194,8 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     }
     private void colors() {
         float k = hud.darkK();
+        float mk = hud.musicTintK();
+        if (mk >= 0f) k = mk; // 音乐页且背景是「固定色/跟随封面」：按钮跟着音乐背景明暗走，否则深色封面上会是一颗黑按钮
         int bg = mix(0x1214171c, 0x1affffff, k), fg = mix(0xff14171c, 0xffffffff, k);
         gear.colors(bg, fg);
         fs.colors(bg, fg);
@@ -258,15 +285,63 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     /** 媒体快照（主线程）：交给 Hud 画音乐卡片；换歌了去拉整首歌词、换封面 */
     @Override public void media(JSONObject m) { main.post(() -> {
         hud.setMedia(m);
-        String tid = m == null ? "" : m.optString("trackId", "");
-        if (!tid.equals(lastTrackId)) { lastTrackId = tid; if (act != null) act.musicLyrics(); }
-        String cu = m == null ? "" : m.optString("coverUrl", "");
-        if (!cu.equals(coverNow)) { coverNow = cu; if (act != null) act.loadCover(cu); } // 换歌了换封面（走 openCover，见 Actions）
+        // 曲目号：trackId 优先，没给就用歌名兜底（照 uiplus 规范，trackId 可能为空）
+        String tid = m == null ? "" : (m.optString("trackId", "").isEmpty() ? m.optString("title", "") : m.optString("trackId", ""));
+        boolean trackChanged = !tid.equals(lastTrackId);
+        if (trackChanged) { lastTrackId = tid; trackAt = android.os.SystemClock.uptimeMillis(); if (act != null) act.musicLyrics(); }
+        String url = m == null ? "" : m.optString("coverUrl", "");
+        // 换歌后宿主头一两秒给的封面常常还是上一首的（同缓存文件、内容没换，地址也一样）：
+        // 取到的和上一首确认过的封面一模一样时先不用，每 0.3s 再取一次，换成新图了才算这首的；3s 还一样当真是同一张（同专辑）。
+        // 认准后再过 2s 看一眼（宿主有时过会儿才换内容）。没封面地址先占位。做法照琉光音乐。
+        if (url.isEmpty()) {
+            covSeq++; covUrl = ""; covTid = ""; coverHash = Long.MIN_VALUE; hashTid = ""; coverFailCount = 0;
+            if (coverRetry != null) { main.removeCallbacks(coverRetry); coverRetry = null; }
+            hud.setCover(null); // 占位
+            return;
+        }
+        if (url.equals(covUrl) && tid.equals(covTid)) return; // 同歌同图：不重复加载
+        final int seq = ++covSeq;
+        final String fUrl = url, fTid = tid;
+        covUrl = url; covTid = tid; coverFailCount = 0;
+        if (coverRetry != null) { main.removeCallbacks(coverRetry); coverRetry = null; }
+        if (act != null) fetchCover(seq, fUrl, fTid); // 下完才上屏；期间又换了就丢弃
     }); }
-    /** 封面加载完成（CarData 已回主线程；还停在这首歌才上屏） */
-    void coverReady(String url, android.graphics.Bitmap b) { if (url.equals(coverNow)) hud.setCover(b); }
+
+    /** 取封面（带序号，过期结果丢弃）；到货后走 onCoverArrived 决定要不要上屏/要不要重取 */
+    private void fetchCover(int seq, String fUrl, String fTid) {
+        if (act == null) return;
+        act.loadCover(fUrl, (b, h) -> onCoverArrived(seq, fUrl, fTid, b, h));
+    }
+    /** 封面到货：若和上一首确认过的那张一模一样（换歌后宿主还没换文件），每 0.3s 重取，最长 COVER_WAIT；否则上屏并 2s 后再看一眼 */
+    private void onCoverArrived(int seq, String fUrl, String fTid, android.graphics.Bitmap b, long h) {
+        if (seq != covSeq || !covUrl.equals(fUrl)) return; // 过期结果 / 已换歌换图：丢弃
+        if (h != 0 && h == coverHash) { // 和上一首确认过的封面一模一样
+            if (!hashTid.equals(fTid) && android.os.SystemClock.uptimeMillis() - trackAt < COVER_WAIT) {
+                // 换歌后还是上一首那张：宿主多半还没换封面文件，过一会儿再取
+                final Runnable r = () -> fetchCover(++covSeq, fUrl, fTid);
+                coverRetry = r; main.postDelayed(r, 300);
+                return;
+            }
+            hashTid = fTid; // 等够了还一样：真是同一张（同专辑），认它属于这首
+            return;
+        }
+        onCover(b, h, fTid);
+        if (b != null) { // 认准后过 2s 再看一眼（宿主有时过会儿才换内容）
+            final Runnable r = () -> fetchCover(++covSeq, fUrl, fTid);
+            coverRetry = r; main.postDelayed(r, 2000);
+        } else if (++coverFailCount <= 6) { // 没取到：过 2s 再看（宿主可能还没准备好封面文件），最多重试几次
+            final Runnable r = () -> fetchCover(++covSeq, fUrl, fTid);
+            coverRetry = r; main.postDelayed(r, 2000);
+        }
+    }
+    /** 把一张确认过的封面送进画布（同时记它对应的曲目与内容指纹） */
+    private void onCover(android.graphics.Bitmap b, long h, String fTid) {
+        coverHash = (h == 0) ? Long.MIN_VALUE : h;
+        hashTid = fTid;
+        hud.setCover(b);
+    }
     /** 整首歌词（行列表） */
-    void setLyrics(List<String> l) { main.post(() -> hud.setLyrics(l)); }
+    void setLyrics(List<CarData.LyLine> l) { main.post(() -> hud.setLyrics(l)); }
     /** 一打开就用对深浅色（不渐变） */
     void darkNow(boolean d) { darkTo = d; hud.setDark(d, false, null); colors(); }
     boolean darkTo() { return darkTo; }

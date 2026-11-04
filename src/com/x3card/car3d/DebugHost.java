@@ -150,6 +150,8 @@ final class DebugHost implements Host {
     private final Map<String, Integer> auto = new LinkedHashMap<>();
     private int track;
     private boolean lyrOff, control = true, online = true;
+    /** 最近一次 apps.launch 的包名（调试面板里看） */
+    String lastLaunch = "";
     private String failCode = "BUSY";
     private int fail;
     private void load() {
@@ -563,6 +565,12 @@ final class DebugHost implements Host {
             JSONObject o = (JSONObject) a[0];
             if (o.optString("action").trim().isEmpty()) throw new E("INVALID_ARGUMENT", "options.action 不能是空的");
             if (o.has("className") && !o.has("packageName")) throw new E("INVALID_ARGUMENT", "写了 className 就要写 packageName");
+            return null;
+        });
+        EFF.put("apps.launch", a -> { // 调试宿主不真启动 App：校验包名，记一条
+            String p = String.valueOf(a[0]);
+            if (!p.matches("[A-Za-z]\\w*(\\.[A-Za-z]\\w*)+")) throw new E("INVALID_ARGUMENT", "packageName 要合法：" + p);
+            lastLaunch = p;
             return null;
         });
         EFF.put("vehicle.seat.setHeating", a -> setV("seat." + a[0] + ".heating", i(a[1]) + 1));
