@@ -302,11 +302,53 @@ abstract class Sheet extends FrameLayout {
         r.setOrientation(col ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         r.setGravity(col ? Gravity.NO_GRAVITY : Gravity.CENTER_VERTICAL);
         r.setPadding(0, px(0.16f), 0, px(0.16f));
+        if (col) r.setTag(Boolean.TRUE); // 标记「标题 + 控件」行，构建完由 applySmartRows 按宽度决定横竖
         BottomLine bl = new BottomLine(LINE);
         if (rowsBox != null) bl.setPads(px(0.52f), 0); // 组内分割线内缩：左起对齐文字列，右随卡片内边距留边（照 iOS 参考图）
         r.setBackground(bl);
         (rowsBox != null ? rowsBox : body).addView(r, new LinearLayout.LayoutParams(-1, -2));
         return r;
+    }
+    /** 能放开才横向单行、放不开保持竖向：按实测宽度重排「标题 + 控件」两件的行。
+     *  在 rows() 构建完之后调用；3 件以上（含子选项、展开内容）一律保持竖向。 */
+    protected void applySmartRows() {
+        if (H <= 1 || rem <= 0) return; // onSizeChanged 之前 rem 还是默认 40，先别算
+        boolean narrow = W < H;
+        float cardW = narrow ? (W - 2f * px(0.16f)) : (W * 0.46f - 2f * px(0.2f));
+        int avail = Math.round(cardW) - 2 * px(0.36f) - 2 * px(0.22f); // 扣掉 body 与分组卡片的左右内边距
+        if (avail <= 0) return;
+        int gap = px(0.12f);
+        int uns = android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED);
+        for (LinearLayout rows : groupRows) {
+            for (int i = 0; i < rows.getChildCount(); i++) {
+                View v = rows.getChildAt(i);
+                if (!Boolean.TRUE.equals(v.getTag()) || !(v instanceof LinearLayout)) continue;
+                LinearLayout r = (LinearLayout) v;
+                if (r.getChildCount() != 2) continue;
+                View a = r.getChildAt(0), b = r.getChildAt(1);
+                a.measure(uns, uns);
+                b.measure(uns, uns);
+                int bw = b.getMeasuredWidth();
+                boolean horiz = bw > 0 && a.getMeasuredWidth() + gap + bw <= avail;
+                r.setOrientation(horiz ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+                r.setGravity(horiz ? Gravity.CENTER_VERTICAL : Gravity.NO_GRAVITY);
+                if (a.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+                    LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) a.getLayoutParams();
+                    lp.width = horiz ? 0 : LinearLayout.LayoutParams.MATCH_PARENT;
+                    lp.weight = horiz ? 1f : 0f; // 拿剩余宽度，标题不会换行
+                    a.setLayoutParams(lp);
+                }
+                // ★关键：row(true) 在 VERTICAL 下给子项默认 width=MATCH_PARENT；切成 HORIZONTAL 后
+                // 控件若仍占满整行会把标题挤成 0 宽（文字消失、TextView 逐字换行把行高撑大）。
+                // 固定成实测自然宽（EXACT），标题有确定空间，分段控件内部 weight 均分也正常
+                if (b.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+                    LinearLayout.LayoutParams lp2 = (LinearLayout.LayoutParams) b.getLayoutParams();
+                    lp2.width = horiz ? bw : LinearLayout.LayoutParams.MATCH_PARENT;
+                    lp2.weight = 0f;
+                    b.setLayoutParams(lp2);
+                }
+            }
+        }
     }
     protected LinearLayout hbox() {
         LinearLayout l = new LinearLayout(getContext());
@@ -712,7 +754,7 @@ abstract class Sheet extends FrameLayout {
         ICONS.put("\u4fef\u89c6\u89d2\u5ea6", "M12 5a7 7 0 1 1-6 4M6 9V5M6 9h4");
         ICONS.put("\u8f66\u7684\u5927\u5c0f", "M4 14l5-5M4 8v6h6M20 10l-5 5M20 16v-6h-6");
         ICONS.put("\u89c6\u91ce", "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 1 0 0-6z");
-        ICONS.put("深浅色", "M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z");
+        ICONS.put("主题模式", "M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z");
         ICONS.put("24 小时制", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2");
         ICONS.put("显示秒", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4l3 2M9 1h6");
         ICONS.put("窄屏自动隐藏秒", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2");

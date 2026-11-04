@@ -79,22 +79,22 @@ final class Panel extends Sheet {
         body.removeAllViews();
         resetGroups();
         accentChanged();
-        if ("model".equals(page)) { rowsModel(); } else { rowsMain(); }
+        if ("model".equals(page)) { rowsModel(); } else { rowsMain(); applySmartRows(); }
     }
-    /** 主设置页分组（从上到下）：顶栏 → 车况显示 → 音乐卡片 → 车模 → 成就 → 调试 → 关于。3D 车模细节收进「3D 车模设置」二级页 */
+    /** 主设置页分组（从上到下）：顶栏 → 车模页 → 音乐页 → 成就 → 调试 → 关于。3D 车模设置并入车模页，细节在二级页 */
     private void rowsMain() {
         setTitleText("设置");
-        // 顶栏：深浅色（全局主题）+ 时钟格式 + 全屏收起，全部作用在顶部栏（置顶第一项）
+        // 顶栏：主题模式（全局主题）+ 时钟格式 + 全屏收起，全部作用在顶部栏
         group("顶栏");
         LinearLayout r = row(true);
-        r.addView(label("深浅色", null, "全局主题，影响整张卡片的明暗"));
+        r.addView(label("主题模式", null, "全局主题，影响整张卡片的明暗"));
         r.addView(seg("theme", Settings.THEMES, new String[] { "跟随车机", "浅色", "深色" }, 0));
         swRow("hour24", "24 小时制", "关闭则显示 12 小时制（带 AM/PM）");
         swRow("showSec", "显示秒", "时间分钟后显示秒数");
         if (S.bool("showSec")) swRow("secHideNarrow", "窄屏自动隐藏秒", "竖屏时隐藏秒，避免顶栏拥挤");
         if (fsRow) swRow("fsBar", "全屏时收起状态栏", "只在全屏页生效；每次进全屏先显示，这里开着会自动再收起");
-        // 车况显示：背景、图标、底部数据，全部只作用在车况页
-        group("车况显示");
+        // 车模页：背景、图标、底部数据、3D 车模设置
+        group("车模页");
         r = row(true);
         r.addView(label("背景风格", null, "只影响车况显示"));
         r.addView(seg("bg", Settings.BGS, new String[] { "影棚", "暖调", "冷调", "图片" }, 0));
@@ -147,8 +147,14 @@ final class Panel extends Sheet {
                 br.addView(sum);
             }
         }
-        // 音乐卡片：背景 + 歌词，全部只作用在音乐卡片页
-        group("音乐卡片");
+        // 3D 车模设置：与车模页其它项同组
+        r = row(true);
+        r.addView(label("3D 车模设置", null, "车模、车漆、轮毂、卡钳、车况页视角都在这"));
+        LinearLayout acts = hbox();
+        acts.addView(actBtn("进入 ›", true, () -> { page = "model"; rows(); }));
+        r.addView(acts);
+        // 音乐页：背景 + 歌词
+        group("音乐页");
         r = row(true);
         r.addView(label("背景模式", null, "深浅模式 / 固定色 / 跟随封面，只影响音乐卡片"));
         r.addView(segOf(Settings.MBG_MODE, Settings.MBG_MODE_NAMES, S.str("mBgMode"), 0, v -> { S.set("mBgMode", (String) v); refresh(""); }));
@@ -157,10 +163,13 @@ final class Panel extends Sheet {
             r.addView(colorRow("mBgColor", Settings.MBG_COLORS));
         }
         if ("cover".equals(S.str("mBgMode"))) {
-            LinearLayout cr = row(true);
-            cr.addView(subLabel("封面风格", "跟随当前歌曲封面的配色"));
-            LinearLayout cr2 = row(true);
-            cr2.addView(segOf(Settings.MBG_COVER, Settings.MBG_COVER_NAMES, S.str("mBgCover"), 3, v -> S.set("mBgCover", (String) v)));
+            // 与「固定色」子项一致：都作为背景模式这一行内的子项，不另起独立行
+            r.addView(subLabel("封面风格", "跟随当前歌曲封面的配色"));
+            View st = segOf(Settings.MBG_COVER, Settings.MBG_COVER_NAMES, S.str("mBgCover"), 3, v -> S.set("mBgCover", (String) v));
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+            slp.topMargin = px(0.08f); slp.leftMargin = px(0.08f); // 同 colorRow 的外边距
+            st.setLayoutParams(slp);
+            r.addView(st);
         }
         // 歌词（对齐「背景模式」式排布：竖屏 / 宽屏各占一条竖排，标题一行、提示词一行、行数 / 字号步进器一行）
         r = row(true);
@@ -169,13 +178,6 @@ final class Panel extends Sheet {
         r = row(true);
         r.addView(label("宽屏歌词", null, "全屏 / 七分屏用这一组"));
         r.addView(lyricPair(Settings.LYR_ROWS, "lyricLinesL", Settings.LYR_SIZE, "lyricSizeL"));
-        // 车模：整车 3D 模型相关细节收进「3D 车模设置」二级页
-        group("车模");
-        r = row(true);
-        r.addView(label("3D 车模设置", null, "车模、车漆、轮毂、卡钳、车况页视角都在这"));
-        LinearLayout acts = hbox();
-        acts.addView(actBtn("进入 ›", true, () -> { page = "model"; rows(); }));
-        r.addView(acts);
         // 成就
         group("成就");
         r = row(true);
@@ -372,7 +374,7 @@ final class Panel extends Sheet {
         LinearLayout pair = new LinearLayout(getContext());
         pair.setOrientation(LinearLayout.HORIZONTAL);
         pair.setGravity(Gravity.CENTER_VERTICAL);
-        pair.addView(stepper(rowsK, rowsV, false, " 行"));
+        pair.addView(stepper(rowsK, rowsV, false, "")); // 行数也只显示数字，不再带「 行」
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
         sp.leftMargin = px(0.3f);
         pair.addView(stepper(sizeK, sizeV, false, ""), sp); // 字号无单位，纯数字，对齐网页版
