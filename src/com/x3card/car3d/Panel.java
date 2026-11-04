@@ -115,6 +115,7 @@ final class Panel extends Sheet {
             hdr.setOnClickListener(v -> { tellsExpanded = !tellsExpanded; rows(); });
             tr.addView(hdr);
             if (tellsExpanded) {
+                tr.setTag(null); // 展开后图标开关较多，跳过横向自适应、保持竖向自动换行
                 tr.addView(tells());
             } else {
                 TextView sum = new TextView(getContext());
@@ -136,6 +137,7 @@ final class Panel extends Sheet {
             hdr.setOnClickListener(v -> { statsExpanded = !statsExpanded; rows(); });
             br.addView(hdr);
             if (statsExpanded) {
+                br.setTag(null); // 同上：数据标签较多，保持竖向自动换行
                 br.addView(tags());
             } else {
                 TextView sum = new TextView(getContext());

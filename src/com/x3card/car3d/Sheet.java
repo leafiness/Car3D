@@ -318,6 +318,7 @@ abstract class Sheet extends FrameLayout {
         int avail = Math.round(cardW) - 2 * px(0.36f) - 2 * px(0.22f); // 扣掉 body 与分组卡片的左右内边距
         if (avail <= 0) return;
         int gap = px(0.12f);
+        int reserve = px(0.4f); // 预留控件 margin、内边距与测量误差：宁可判竖向换行，也不让横向挤到重叠
         int uns = android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED);
         for (LinearLayout rows : groupRows) {
             for (int i = 0; i < rows.getChildCount(); i++) {
@@ -329,7 +330,9 @@ abstract class Sheet extends FrameLayout {
                 a.measure(uns, uns);
                 b.measure(uns, uns);
                 int bw = b.getMeasuredWidth();
-                boolean horiz = bw > 0 && a.getMeasuredWidth() + gap + bw <= avail;
+                // 三重判定：控件测得出宽度、不超过行宽 60%（给标题留足空间）、总宽加余量后仍放得开
+                boolean horiz = bw > 0 && bw <= avail * 0.6f
+                        && a.getMeasuredWidth() + gap + bw + reserve <= avail;
                 r.setOrientation(horiz ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
                 r.setGravity(horiz ? Gravity.CENTER_VERTICAL : Gravity.NO_GRAVITY);
                 if (a.getLayoutParams() instanceof LinearLayout.LayoutParams) {
