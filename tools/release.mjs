@@ -41,8 +41,8 @@ function parseChangelog(text) {
     const h = ln.match(/^##\s+v?(\S+)\s*$/);
     if (h) { cur = { ver: h[1], items: [] }; out.push(cur); continue; }
     if (!cur) continue;
-    const b = ln.match(/^\s*[-*·]\s+(.*\S)\s*$/);
-    if (b) cur.items.push(b[1]);
+    const b = ln.match(/^\s*(?:[-*·]|\d+[.)])\s+(.*\S)\s*$/);
+    if (b) cur.items.push(b[1].replace(/^\d+[.)]\s+/, '')); // 兼容无序与有序写法，序号统一由输出时生成
   }
   return out;
 }
@@ -57,9 +57,9 @@ if (blocks[0].ver !== VER) {
 }
 if (!blocks[0].items.length) { console.error('✗ CHANGELOG.md 顶部这段还没有条目'); process.exit(1); }
 
-/** 生成 changelog.txt 的内容：取最近 KEEP_VERSIONS 个版本，首行版本号 + 「· 条目」 */
+/** 生成 changelog.txt 的内容：取最近 KEEP_VERSIONS 个版本，首行版本号 + 带序号的条目（用户要求日志有序号） */
 function buildChangelogText(bs) {
-  return bs.slice(0, KEEP_VERSIONS).map(b => 'v' + b.ver + '\n' + b.items.map(i => '· ' + i).join('\n')).join('\n\n') + '\n';
+  return bs.slice(0, KEEP_VERSIONS).map(b => 'v' + b.ver + '\n' + b.items.map((i, n) => (n + 1) + '. ' + i).join('\n')).join('\n\n') + '\n';
 }
 const changelogText = buildChangelogText(blocks);
 

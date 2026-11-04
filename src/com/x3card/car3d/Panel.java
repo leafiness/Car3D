@@ -343,9 +343,8 @@ final class Panel extends Sheet {
         val.setTextColor(TXT);
         val.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.24f));
         val.setGravity(Gravity.CENTER);
-        val.setMinWidth(px(0.8f));
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-2, -2);
-        vlp.leftMargin = px(0.03f); vlp.rightMargin = px(0.03f); // 收紧按钮与数字之间的距离
+        val.setMinWidth(px(0.36f)); // 只容纳一~两位数即可；原 0.8rem 在车机大 rem 下两侧各空出三十多像素
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-2, -2); // 数字区不再额外留白
         val.setLayoutParams(vlp);
         box.addView(val);
         box.addView(stepBtn("+", () -> { int i = vals.indexOf(S.str(k)); if (i < vals.size() - 1) { flashKey = k + "+"; S.set(k, vals.get(i + 1)); } }, k + "+"));
@@ -355,7 +354,7 @@ final class Panel extends Sheet {
     private String flashKey;
     private TextView stepBtn(String sym, Runnable on, String key) {
         TextView b = (TextView) actBtn(sym, false, on);
-        b.setPadding(px(0.11f), px(0.08f), px(0.11f), px(0.08f)); // 按钮与数字间距减半，圆环略小
+        b.setPadding(px(0.08f), px(0.08f), px(0.08f), px(0.08f)); // 按钮再收窄，紧贴数字
         if (key.equals(flashKey)) { flashKey = null; flash(b); }
         return b;
     }
@@ -392,7 +391,7 @@ final class Panel extends Sheet {
         t.setText(name); t.setTextColor(SUB);
         t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
-        tlp.rightMargin = px(0.12f);
+        tlp.rightMargin = px(0.08f);
         g.addView(t, tlp);
         g.addView(stepper);
         return g;
