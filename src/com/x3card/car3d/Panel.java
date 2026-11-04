@@ -371,16 +371,31 @@ final class Panel extends Sheet {
             if (bg instanceof GradientDrawable) ((GradientDrawable) bg).setColor(BTN_OFF_BG);
         }, 150);
     }
-    /** 歌词设置里「行数 −/+」「字号 −/+」两个步进器并排成一行：对齐网页版 .nums 里两个 .num 横排（竖屏/宽屏各一行） */
+    /** 歌词「行数 / 字号」两组步进器：前面带文字标签，一行放不开时字号组自动换行 */
     private View lyricPair(List<String> rowsV, String rowsK, List<String> sizeV, String sizeK) {
-        LinearLayout pair = new LinearLayout(getContext());
-        pair.setOrientation(LinearLayout.HORIZONTAL);
-        pair.setGravity(Gravity.CENTER_VERTICAL);
-        pair.addView(stepper(rowsK, rowsV, false, "")); // 行数也只显示数字，不再带「 行」
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
-        sp.leftMargin = px(0.3f);
-        pair.addView(stepper(sizeK, sizeV, false, ""), sp); // 字号无单位，纯数字，对齐网页版
+        Flow pair = new Flow(getContext());
+        pair.addView(stepGroup("行数", stepper(rowsK, rowsV, false, "")), lyricLp());
+        pair.addView(stepGroup("字号", stepper(sizeK, sizeV, false, "")), lyricLp());
         return pair;
+    }
+    private LinearLayout.LayoutParams lyricLp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.rightMargin = px(0.3f); lp.bottomMargin = px(0.12f);
+        return lp;
+    }
+    /** 步进器组：按钮前面带「行数 / 字号」标签，便于区分两组数字 */
+    private View stepGroup(String name, View stepper) {
+        LinearLayout g = new LinearLayout(getContext());
+        g.setOrientation(LinearLayout.HORIZONTAL);
+        g.setGravity(Gravity.CENTER_VERTICAL);
+        TextView t = new TextView(getContext());
+        t.setText(name); t.setTextColor(SUB);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
+        tlp.rightMargin = px(0.12f);
+        g.addView(t, tlp);
+        g.addView(stepper);
+        return g;
     }
     /** 折叠指示：单纯矢量「∨」形箭头（收起朝下、展开朝上），细线不粗、尺寸小巧；点所属分组可展开/收起 */
     private View chevron(boolean up) {

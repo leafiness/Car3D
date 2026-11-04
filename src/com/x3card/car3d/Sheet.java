@@ -330,8 +330,8 @@ abstract class Sheet extends FrameLayout {
                 a.measure(uns, uns);
                 b.measure(uns, uns);
                 int bw = b.getMeasuredWidth();
-                // 三重判定：控件测得出宽度、不超过行宽 60%（给标题留足空间）、总宽加余量后仍放得开
-                boolean horiz = bw > 0 && bw <= avail * 0.6f
+                // 分段控件一律竖向；其余：控件测得出宽度、不超过行宽 60%（给标题留足空间）、总宽加余量后仍放得开
+                boolean horiz = bw > 0 && !"seg".equals(b.getTag()) && bw <= avail * 0.6f
                         && a.getMeasuredWidth() + gap + bw + reserve <= avail;
                 r.setOrientation(horiz ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
                 r.setGravity(horiz ? Gravity.CENTER_VERTICAL : Gravity.NO_GRAVITY);
@@ -471,6 +471,7 @@ abstract class Sheet extends FrameLayout {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = px(0.14f);
         box.setLayoutParams(lp);
+        box.setTag("seg"); // 分段项内部按 weight 均分，横向被压缩会挤到重叠，自适应时一律竖向
         return box;
     }
     /** 开关（.sw）：轨道 .78×.44rem，滑块 .34rem 白圆（带阴影），开时轨道走强调色、滑块右移 .34rem */
