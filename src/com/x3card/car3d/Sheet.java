@@ -376,7 +376,7 @@ abstract class Sheet extends FrameLayout {
         b.setText(text);
         b.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.22f));
         b.setTextColor(pri ? 0xffffffff : TXT);
-        b.setPadding(px(0.24f), pri ? px(0.12f) : px(0.16f), px(0.24f), pri ? px(0.12f) : px(0.16f));
+        b.setPadding(px(0.24f), px(0.12f), px(0.24f), px(0.12f)); // 上下高度统一，避免强调/非强调按钮并排时一高一矮
         GradientDrawable d = new GradientDrawable();
         d.setCornerRadius(px(0.3f));
         // 同 .act：描边风（1px 边框 + 半透明底）；pri 用强调色实心、无边框
