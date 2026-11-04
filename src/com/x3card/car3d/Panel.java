@@ -153,7 +153,7 @@ final class Panel extends Sheet {
         r = row(true);
         r.addView(label("3D 车模设置", null, "车模、车漆、轮毂、卡钳、车况页视角都在这"));
         LinearLayout acts = hbox();
-        acts.addView(actBtn("进入 ›", true, () -> { page = "model"; rows(); }));
+        acts.addView(actBtn("进入 ›", false, () -> { page = "model"; rows(); }));
         r.addView(acts);
         // 音乐页：背景 + 歌词
         group("音乐页");
@@ -185,7 +185,7 @@ final class Panel extends Sheet {
         r = row(true);
         r.addView(label("成就墙", null, "按里程、行程、充电、足迹等解锁勋章"));
         LinearLayout a6 = hbox();
-        a6.addView(actBtn("打开成就墙", true, () -> act.act("achOpen")));
+        a6.addView(actBtn("打开成就墙", false, () -> act.act("achOpen")));
         a6.addView(actBtnAmber("清空成就", () -> confirm("清空成就", "确定清空所有成就记录？此操作不可撤销。", () -> act.act("achReset"))));
         r.addView(a6);
         if (dbgRow) {
@@ -345,7 +345,7 @@ final class Panel extends Sheet {
         val.setGravity(Gravity.CENTER);
         val.setMinWidth(px(0.8f));
         LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-2, -2);
-        vlp.leftMargin = px(0.12f); vlp.rightMargin = px(0.12f);
+        vlp.leftMargin = px(0.03f); vlp.rightMargin = px(0.03f); // 收紧按钮与数字之间的距离
         val.setLayoutParams(vlp);
         box.addView(val);
         box.addView(stepBtn("+", () -> { int i = vals.indexOf(S.str(k)); if (i < vals.size() - 1) { flashKey = k + "+"; S.set(k, vals.get(i + 1)); } }, k + "+"));
@@ -355,7 +355,7 @@ final class Panel extends Sheet {
     private String flashKey;
     private TextView stepBtn(String sym, Runnable on, String key) {
         TextView b = (TextView) actBtn(sym, false, on);
-        b.setPadding(px(0.16f), px(0.08f), px(0.16f), px(0.08f)); // 步进器按钮更紧凑，圆环更小
+        b.setPadding(px(0.11f), px(0.08f), px(0.11f), px(0.08f)); // 按钮与数字间距减半，圆环略小
         if (key.equals(flashKey)) { flashKey = null; flash(b); }
         return b;
     }
