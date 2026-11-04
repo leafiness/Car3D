@@ -344,7 +344,8 @@ final class Panel extends Sheet {
         val.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.24f));
         val.setGravity(Gravity.CENTER);
         val.setMinWidth(px(0.36f)); // 只容纳一~两位数即可；原 0.8rem 在车机大 rem 下两侧各空出三十多像素
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-2, -2); // 数字区不再额外留白
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-2, -2);
+        vlp.leftMargin = px(0.06f); vlp.rightMargin = px(0.06f); // 胶囊内数字与圆按钮留一点呼吸
         val.setLayoutParams(vlp);
         box.addView(val);
         box.addView(stepBtn("+", () -> { int i = vals.indexOf(S.str(k)); if (i < vals.size() - 1) { flashKey = k + "+"; S.set(k, vals.get(i + 1)); } }, k + "+"));
@@ -354,7 +355,16 @@ final class Panel extends Sheet {
     private String flashKey;
     private TextView stepBtn(String sym, Runnable on, String key) {
         TextView b = (TextView) actBtn(sym, false, on);
-        b.setPadding(px(0.08f), px(0.08f), px(0.08f), px(0.08f)); // 按钮再收窄，紧贴数字
+        int sz = px(0.36f);
+        b.setLayoutParams(new LinearLayout.LayoutParams(sz, sz));
+        b.setPadding(0, 0, 0, 0);
+        b.setGravity(Gravity.CENTER);
+        int c = light ? 0x26000000 : 0x28ffffff; // 圆形按钮比胶囊亮一档
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        d.setColor(c);
+        b.setBackground(d);
+        b.setTag(c); // flash() 结束后按此色还原
         if (key.equals(flashKey)) { flashKey = null; flash(b); }
         return b;
     }
@@ -363,11 +373,12 @@ final class Panel extends Sheet {
         if (!(v instanceof TextView)) return;
         TextView t = (TextView) v;
         Drawable bg = t.getBackground();
+        int oldBg = (v.getTag() instanceof Integer) ? (Integer) v.getTag() : BTN_OFF_BG;
         t.setTextColor(0xffffffff);
         if (bg instanceof GradientDrawable) ((GradientDrawable) bg).setColor(acc());
         v.postDelayed(() -> {
             t.setTextColor(TXT);
-            if (bg instanceof GradientDrawable) ((GradientDrawable) bg).setColor(BTN_OFF_BG);
+            if (bg instanceof GradientDrawable) ((GradientDrawable) bg).setColor(oldBg);
         }, 150);
     }
     /** 歌词「行数 / 字号」两组步进器：前面带文字标签，一行放不开时字号组自动换行 */
@@ -379,19 +390,24 @@ final class Panel extends Sheet {
     }
     private LinearLayout.LayoutParams lyricLp() {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-        lp.rightMargin = px(0.3f); lp.bottomMargin = px(0.12f);
+        lp.rightMargin = px(0.18f); lp.bottomMargin = px(0.12f);
         return lp;
     }
-    /** 步进器组：按钮前面带「行数 / 字号」标签，便于区分两组数字 */
+    /** 步进器胶囊：标签、圆形 ± 按钮、数字同处一个圆角底内，两个胶囊并排 */
     private View stepGroup(String name, View stepper) {
         LinearLayout g = new LinearLayout(getContext());
         g.setOrientation(LinearLayout.HORIZONTAL);
         g.setGravity(Gravity.CENTER_VERTICAL);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(px(0.3f));
+        bg.setColor(light ? 0x12000000 : 0x1affffff);
+        g.setBackground(bg);
+        g.setPadding(px(0.16f), px(0.08f), px(0.16f), px(0.08f));
         TextView t = new TextView(getContext());
         t.setText(name); t.setTextColor(SUB);
         t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
-        tlp.rightMargin = px(0.08f);
+        tlp.rightMargin = px(0.1f);
         g.addView(t, tlp);
         g.addView(stepper);
         return g;
