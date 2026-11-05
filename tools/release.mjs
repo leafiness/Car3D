@@ -1,14 +1,17 @@
-// 发版脚本：node tools/release.mjs [--preview]
+// 发版脚本：node tools/release.mjs [--preview] [--test]
 //   --preview  只打印将要发布的版本与更新日志（不发版），发版前给用户确认用
-//   不带参数   同步 changelog.txt → 构建 APK → 暂存到部署目录（不部署，部署由 WorkBuddy 站点工具做）
+//   --test     发到测试通道（version_test.txt / latest_test.apk / changelog_test.txt）：
+//              构建时把 Settings.testBuild 默认翻成 true（测试版 APK 装完才走测试通道），
+//              且不碰正式通道文件（version.txt / latest.apk / changelog.txt），正式用户不受影响。
+//   不带参数   同步 changelog.txt → 构建 APK → 暂存到部署目录（正式通道）
 //
 // 流程（详见 RELEASE.md）：
 //   1) 改代码 → 2) 改 AndroidManifest.xml 版本号 → 3) 在 CHANGELOG.md 顶部写本次更新日志
-//   4) node tools/release.mjs --preview → 把日志给用户确认/修改 → 5) node tools/release.mjs
+//   4) node tools/release.mjs --preview → 把日志给用户确认/修改 → 5) node tools/release.mjs [--test]
 //   6) 部署到线上
 //
 // 关键：CHANGELOG.md 是更新日志的唯一来源，changelog.txt 由本脚本生成（App 弹窗与网页端读它）。
-// 版本号只在 AndroidManifest.xml 里写一处，本脚本同步到 version.txt 与 APK 文件名。
+// 版本号只在 AndroidManifest.xml 里写一处，本脚本同步到 version.txt / version_test.txt 与 APK 文件名。
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -77,7 +80,21 @@ if (PREVIEW) {
   process.exit(0);
 }
 
-// ---------- 正式发版：同步日志 → 构建 → 暂存 ----------
+// ---------- 发版：同步日志 → 构建 → 暂存 ----------
+const TEST = process.argv.includes('--test');
+const SETTINGS_FILE = 'src/com/x3card/car3d/Settings.java';
+const TEST_OFF = 'd.put("testBuild", false);';
+const TEST_ON = 'd.put("testBuild", true);';
+
+// 测试通道：构建前把 testBuild 默认翻成 true（否则测试版 APK 覆盖安装后仍走正式通道），构建完还原
+let flipped = false;
+if (TEST) {
+  let s = read(SETTINGS_FILE);
+  if (s.includes(TEST_OFF)) { s = s.replace(TEST_OFF, TEST_ON); write(SETTINGS_FILE, s); flipped = true; }
+  else if (!s.includes(TEST_ON)) { console.error('✗ 找不到 Settings.java 里的 testBuild 默认值行'); process.exit(1); }
+  console.log('· 测试通道：构建期已把 testBuild 默认翻为 true');
+}
+
 write('changelog.txt', changelogText);
 console.log(`✓ changelog.txt 已同步（${Math.min(KEEP_VERSIONS, blocks.length)} 个版本）`);
 
@@ -92,20 +109,57 @@ for (const k of ['ANDROID_BUILD_TOOLS', 'ANDROID_JAR', 'JAVA_HOME']) {
   if (!fs.existsSync(env[k])) { console.error(`✗ 找不到 ${k}：${env[k]}`); process.exit(1); }
 }
 
-execFileSync('node', ['build.mjs'], { cwd: HERE, stdio: 'inherit', env });
+try {
+  execFileSync('node', ['build.mjs'], { cwd: HERE, stdio: 'inherit', env });
+} finally {
+  if (flipped) { // 还原 testBuild 默认值，避免污染下一次正式构建
+    let s = read(SETTINGS_FILE); s = s.replace(TEST_ON, TEST_OFF); write(SETTINGS_FILE, s); flipped = false;
+    console.log('· 已还原 testBuild 默认为 false');
+  }
+}
 
 const apk = path.join(HERE, 'out', `3D车况 v${VER}.apk`);
 if (!fs.existsSync(apk)) { console.error(`✗ 没找到构建产物：${apk}`); process.exit(1); }
 
 fs.mkdirSync(DEPLOY_DIR, { recursive: true });
-fs.copyFileSync(apk, path.join(DEPLOY_DIR, `3D车况 v${VER}.apk`));
-fs.copyFileSync(apk, path.join(DEPLOY_DIR, 'latest.apk'));
-fs.writeFileSync(path.join(DEPLOY_DIR, 'version.txt'), `${VER}\n${CODE}\n`, 'utf8');
-fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(DEPLOY_DIR, 'changelog.txt'));
-// 清掉旧版本包，只留这次的（latest.apk 除外）
-for (const f of fs.readdirSync(DEPLOY_DIR)) {
-  if (/^3D车况 v.*\.apk$/.test(f) && f !== `3D车况 v${VER}.apk`) fs.unlinkSync(path.join(DEPLOY_DIR, f));
+// 命名包：测试版带「测试版(版本号)」后缀，避免和正式版命名包混在根目录
+const namedApk = `3D车况 v${VER}${TEST ? ' 测试版(' + CODE + ')' : ''}.apk`;
+fs.copyFileSync(apk, path.join(DEPLOY_DIR, namedApk));
+
+if (TEST) {
+  // 测试通道：双写「根目录 + test/ 子目录」
+  //   - 根目录 version_test.txt / latest_test.apk：给 App 内 Updater 读（它读的是站点根）
+  //   - test/ 子目录：给下载页 index.html 的测试版卡片读（设计上测试版隔离在 test/）
+  //   version_test.txt 第一行带「测试版」字样，下载页版本号直接显示「v0.7.31 测试版」
+  const TEST_DIR = path.join(DEPLOY_DIR, 'test');
+  fs.mkdirSync(TEST_DIR, { recursive: true });
+  for (const d of [DEPLOY_DIR, TEST_DIR]) {
+    fs.copyFileSync(apk, path.join(d, 'latest_test.apk'));
+    fs.writeFileSync(path.join(d, 'version_test.txt'), `${VER} 测试版\n${CODE}\n`, 'utf8');
+    fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(d, 'changelog_test.txt'));
+  }
+  fs.copyFileSync(apk, path.join(TEST_DIR, namedApk));
+  // 清掉根目录里上次误留的测试命名包（测试版命名包只该在 test/）
+  for (const f of fs.readdirSync(DEPLOY_DIR)) {
+    if (/^3D车况 v.*测试版.*\.apk$/.test(f)) fs.unlinkSync(path.join(DEPLOY_DIR, f));
+  }
+  console.log('\n✓ 测试通道暂存完成（根目录 + test/ 双写）：');
+  console.log('   version_test.txt = ' + VER + ' 测试版 / ' + CODE);
+  console.log('   latest_test.apk、changelog_test.txt 已更新（两处）');
+  console.log('   ' + namedApk + ' 已放入 test/');
+  console.log('   （正式通道 version.txt / latest.apk / changelog.txt 未改动）');
+} else {
+  fs.copyFileSync(apk, path.join(DEPLOY_DIR, 'latest.apk'));
+  fs.writeFileSync(path.join(DEPLOY_DIR, 'version.txt'), `${VER}\n${CODE}\n`, 'utf8');
+  fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(DEPLOY_DIR, 'changelog.txt'));
+  // 清掉旧版本包，只留这次的（latest.apk 除外）
+  for (const f of fs.readdirSync(DEPLOY_DIR)) {
+    if (/^3D车况 v.*\.apk$/.test(f) && f !== `3D车况 v${VER}.apk`) fs.unlinkSync(path.join(DEPLOY_DIR, f));
+  }
+  console.log('\n✓ 正式通道暂存完成：');
+  console.log('   version.txt = ' + VER + ' / ' + CODE);
+  console.log('   latest.apk、changelog.txt 已更新');
 }
-console.log('\n✓ 暂存完成，部署目录内容：');
+console.log('部署目录内容：');
 for (const f of fs.readdirSync(DEPLOY_DIR).sort()) console.log('   ' + f);
-console.log('\n下一步：部署到线上（站点部署工具），完成后线上 version.txt 应为 ' + VER);
+console.log(`\n下一步：部署到线上（站点部署工具），完成后线上 ${TEST ? 'version_test.txt' : 'version.txt'} 应为 ` + VER);

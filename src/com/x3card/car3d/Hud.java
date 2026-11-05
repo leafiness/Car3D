@@ -953,6 +953,7 @@ final class Hud extends View {
         // ===== 宽屏（图1）：左半屏内——封面居左、歌名/歌手在右、进度条+时间一行、播控按钮居中一行，整组垂直居中 =====
         float br = Math.min(r(0.32f), h * 0.16f);
         float compW = w * 3f / 4f;                 // 组件横向占左半屏的四分之三
+        final int acc = coverAccent();              // 封面衍生强调色（驱动播放键/进度/歌词）
         float gcx = x + (w - compW) / 2f;          // 组件在左半屏内水平居中
         float cov = Math.min(Math.min(h * 0.46f, compW * 0.3f), r(1.9f)); // 封面：分屏等窄窗口下按组件宽 30% 收缩，全宽屏仍由 1.9rem 兜底
         float barGap = r(0.20f), barH = r(0.05f), timeGap = r(0.42f), btnGap = r(0.22f);
@@ -968,6 +969,7 @@ final class Hud extends View {
         float tf = 0.34f, af = 0.26f;
         float textW = Math.max(r(0.5f), compW - cov - r(0.18f));
         float gx = gcx, tx = gx + cov + r(0.18f);
+        drawGlassPanel(c, gx - r(0.18f), top - r(0.22f), gx + compW + r(0.18f), top + groupH + r(0.22f), r(0.30f));
         drawCover(c, gx, top, cov);
         p.setTypeface(ui700); p.setTextSize(r(tf)); p.setColor(ink);
         List<String> titleLines = wrapTitle(mTitle, textW);
@@ -984,8 +986,16 @@ final class Hud extends View {
         float prog = mDur > 0 ? (float) livePos() / mDur : 0;
         sp.setStyle(Paint.Style.FILL); sp.setColor(line);
         c.drawRoundRect(px, progY, px + pw, progY + barH, r(0.03f), r(0.03f), sp);
-        sp.setColor(info);
+        sp.setColor(acc);
         if (prog > 0) c.drawRoundRect(px, progY, px + pw * prog, progY + barH, r(0.03f), r(0.03f), sp);
+        // 发光播放头：外晕 + 实色 + 白芯（仅在有进度时）
+        if (prog > 0 && prog < 1) {
+            float hx = px + pw * prog, hy = progY + barH / 2f;
+            sp.setStyle(Paint.Style.FILL);
+            sp.setColor(withA(acc, 0.30f)); c.drawCircle(hx, hy, barH * 1.9f, sp);
+            sp.setColor(withA(acc, 0.95f)); c.drawCircle(hx, hy, barH * 0.95f, sp);
+            sp.setColor(0xffffffff); c.drawCircle(hx, hy, barH * 0.42f, sp);
+        }
         // 时间：当前 / 总时长（图1/图2 均为右端合并显示）
         p.setTypeface(ui500); p.setTextSize(r(0.30f)); p.setColor(mute);
         p.setTextAlign(Paint.Align.RIGHT);
@@ -997,21 +1007,24 @@ final class Hud extends View {
         playR.set(bcx - brP, by - brP, bcx + brP, by + brP);
         nextR.set(bcx + gap - br, by - br, bcx + gap + br, by + br);
         float sw = Math.max(1.5f, dens * 1.5f);
-        int playIcon = (ink == 0xffeef1f6) ? 0xff15181e : 0xffeef1f6; // 播放键图标取卡片内文字的反色，保证和键底色(ink)对比
-        // 上一曲/下一曲：仅描边圆圈（中间无背景），图标随深浅色
-        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(sw); sp.setColor(withA(ink, 0.5f));
+        int playIcon = 0xffffffff; // 播放键改为强调色渐变，图标用白保证对比
+        // 上一曲/下一曲：仅描边圆圈（中间无背景），描边与图标用强调色
+        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(sw); sp.setColor(withA(acc, 0.6f));
         c.drawCircle(prevR.centerX(), by, br - sw / 2, sp);
         c.drawCircle(nextR.centerX(), by, br - sw / 2, sp);
-        // 暂停/播放：实心底色（ink，随深浅），图标用反相色
-        sp.setStyle(Paint.Style.FILL); sp.setColor(ink);
-        c.drawCircle(playR.centerX(), by, brP, sp);
-        drawPrevIcon(c, prevR.centerX(), by, br * 0.5f, ink);
+        // 暂停/播放：强调色渐变圆（顶亮底深），图标用白色
+        int[] ac = new int[]{ (acc >> 16) & 255, (acc >> 8) & 255, acc & 255 };
+        int acc2 = rgb2i(shade(ac, 0.78f));
+        LinearGradient pg = new LinearGradient(playR.left, playR.top, playR.left, playR.bottom, acc, acc2, Shader.TileMode.CLAMP);
+        sp.setStyle(Paint.Style.FILL); sp.setShader(pg); c.drawCircle(playR.centerX(), by, brP, sp); sp.setShader(null);
+        drawPrevIcon(c, prevR.centerX(), by, br * 0.5f, acc);
         drawPlayPauseIcon(c, playR.centerX(), by, brP * 0.5f, playIcon);
-        drawNextIcon(c, nextR.centerX(), by, br * 0.5f, ink);
+        drawNextIcon(c, nextR.centerX(), by, br * 0.5f, acc);
     }
     /** 窄屏（图2）：横向播控条——左封面、中歌名/歌手、右播控按钮（同一行），下方整行进度条+时间（右端合并显示） */
     private void drawControllerPortrait(Canvas c, float x, float y, float w, float h) {
         float br = Math.min(r(0.26f), h * 0.20f);
+        final int acc = coverAccent();              // 封面衍生强调色
         float cov = Math.min(Math.min(w * 0.22f, h * 0.66f), r(1.5f));   // 封面尺寸
         float gap = br * 2.6f, btnW = gap * 2f + br * 2f;       // 右侧按钮组总宽（gap 留出中间大键空间）
         float textLeft = x + cov + r(0.2f);
@@ -1021,6 +1034,7 @@ final class Hud extends View {
         float groupH = cov + r(0.18f) + r(0.05f) + r(0.34f);    // 封面行 + 间距 + 进度条 + 时间
         float top = y + Math.max(0, h - groupH) / 2f;           // 整条在控制器区域内垂直居中（图2 中部偏下）
         float cy = top + cov / 2f;                             // 封面/文字/按钮的水平中线
+        drawGlassPanel(c, x - r(0.14f), top - r(0.16f), x + w + r(0.14f), top + groupH + r(0.16f), r(0.30f));
         drawCover(c, x, top, cov);
         p.setTypeface(ui700); p.setTextSize(r(tf)); p.setColor(ink);
         List<String> titleLines = wrapTitle(mTitle, textW);
@@ -1039,27 +1053,52 @@ final class Hud extends View {
         playR.set(bcx - brP, cy - brP, bcx + brP, cy + brP);
         nextR.set(bcx + gap - br, cy - br, bcx + gap + br, cy + br);
         float sw = Math.max(1.5f, dens * 1.5f);
-        int playIcon = (ink == 0xffeef1f6) ? 0xff15181e : 0xffeef1f6; // 播放键图标取卡片内文字的反色，保证和键底色(ink)对比
-        // 上一曲/下一曲：仅描边圆圈（中间无背景），图标随深浅色
-        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(sw); sp.setColor(withA(ink, 0.5f));
+        int playIcon = 0xffffffff; // 播放键改为强调色渐变，图标用白保证对比
+        // 上一曲/下一曲：仅描边圆圈（中间无背景），描边与图标用强调色
+        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(sw); sp.setColor(withA(acc, 0.6f));
         c.drawCircle(prevR.centerX(), cy, br - sw / 2, sp);
         c.drawCircle(nextR.centerX(), cy, br - sw / 2, sp);
-        // 暂停/播放：实心底色（ink，随深浅），图标用反相色
-        sp.setStyle(Paint.Style.FILL); sp.setColor(ink);
-        c.drawCircle(playR.centerX(), cy, brP, sp);
-        drawPrevIcon(c, prevR.centerX(), cy, br * 0.5f, ink);
+        // 暂停/播放：强调色渐变圆（顶亮底深），图标用白色
+        int[] ac = new int[]{ (acc >> 16) & 255, (acc >> 8) & 255, acc & 255 };
+        int acc2 = rgb2i(shade(ac, 0.78f));
+        LinearGradient pg = new LinearGradient(playR.left, playR.top, playR.left, playR.bottom, acc, acc2, Shader.TileMode.CLAMP);
+        sp.setStyle(Paint.Style.FILL); sp.setShader(pg); c.drawCircle(playR.centerX(), cy, brP, sp); sp.setShader(null);
+        drawPrevIcon(c, prevR.centerX(), cy, br * 0.5f, acc);
         drawPlayPauseIcon(c, playR.centerX(), cy, brP * 0.5f, playIcon);
-        drawNextIcon(c, nextR.centerX(), cy, br * 0.5f, ink);
+        drawNextIcon(c, nextR.centerX(), cy, br * 0.5f, acc);
         float barY = top + cov + r(0.18f), barH = r(0.05f), pw = w, px = x;
         float prog = mDur > 0 ? (float) livePos() / mDur : 0;
         sp.setStyle(Paint.Style.FILL); sp.setColor(line);
         c.drawRoundRect(px, barY, px + pw, barY + barH, r(0.03f), r(0.03f), sp);
-        sp.setColor(info);
+        sp.setColor(acc);
         if (prog > 0) c.drawRoundRect(px, barY, px + pw * prog, barY + barH, r(0.03f), r(0.03f), sp);
+        // 发光播放头：外晕 + 实色 + 白芯（仅在有进度时）
+        if (prog > 0 && prog < 1) {
+            float hx = px + pw * prog, hy = barY + barH / 2f;
+            sp.setStyle(Paint.Style.FILL);
+            sp.setColor(withA(acc, 0.30f)); c.drawCircle(hx, hy, barH * 1.9f, sp);
+            sp.setColor(withA(acc, 0.95f)); c.drawCircle(hx, hy, barH * 0.95f, sp);
+            sp.setColor(0xffffffff); c.drawCircle(hx, hy, barH * 0.42f, sp);
+        }
         p.setTypeface(ui500); p.setTextSize(r(0.26f)); p.setColor(mute);
         p.setTextAlign(Paint.Align.RIGHT);
         c.drawText(fmtTime(livePos()) + " / " + fmtTime(mDur), px + pw, barY + r(0.30f), p);
         p.setTextAlign(Paint.Align.LEFT);
+    }
+    /** 玻璃拟态面板：半透明填充 + 描边 + 顶部内高光（无法毛玻璃模糊，用半透明叠层模拟；底色随深浅模式取黑/白低透明） */
+    private void drawGlassPanel(Canvas c, float x0, float y0, float x1, float y1, float rad) {
+        boolean dark = (ink == 0xffeef1f6);
+        sp.setStyle(Paint.Style.FILL);
+        sp.setColor(dark ? withA(0xffffffff, 0.10f) : withA(0xff000000, 0.07f));
+        c.drawRoundRect(x0, y0, x1, y1, rad, rad, sp);
+        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(Math.max(1, dens));
+        sp.setColor(dark ? withA(0xffffffff, 0.22f) : withA(0xff000000, 0.12f));
+        c.drawRoundRect(x0, y0, x1, y1, rad, rad, sp);
+        // 顶部内高光：贴近上沿画一圈更亮的描边，做出玻璃反光
+        sp.setStrokeWidth(Math.max(1, dens * 1.5f));
+        sp.setColor(withA(0xffffffff, dark ? 0.16f : 0.55f));
+        c.drawRoundRect(x0 + r(0.03f), y0 + r(0.03f), x1 - r(0.03f), y1 - r(0.03f), rad * 0.85f, rad * 0.85f, sp);
+        sp.setStyle(Paint.Style.FILL);
     }
     /** 歌词字号 / 行高：竖屏 / 宽屏各自的绝对字号（数值即百分之一 rem，同网页版 lyricSize，14~52），行高 = 字号 × 1.42 + 少量行距（同网页版 CSS line-height，不再单独设行间距） */
     private float[] lyricMetrics() {
@@ -1137,12 +1176,13 @@ final class Hud extends View {
         int half = rows / 2;
         int lo = curPhys - half, hi = curPhys + half; // 以当前句为中心、共 rows 行的窗口
         p.setTextAlign(Paint.Align.CENTER);
+        int accL = coverAccent(); // 歌词当前句用强调色高亮（同网页版渐变高亮）
         for (int i = lo; i <= hi; i++) {
             if (i < 0 || i >= phys.size()) continue;
             boolean on = owner.get(i) == cur;
             p.setTypeface(on ? ui700 : ui500);
             p.setTextSize(on ? fontPx * 1.06f : fontPx); // 当前句放大 6%，同网页版 transform: scale(1.06)
-            p.setColor(on ? ink : withA(mute, 0.72f));    // 当前句亮白、其余灰字 72% 透明，同网页版
+            p.setColor(on ? accL : withA(mute, 0.72f));    // 当前句强调色、其余灰字 72% 透明，同网页版
             c.drawText(phys.get(i), x + w / 2, baseline(midY + (i - curPhys) * lh, p), p);
         }
         c.restore();
@@ -1407,6 +1447,16 @@ final class Hud extends View {
         } catch (Exception ignored) { }
         coverDomRgb = out;
         return out;
+    }
+    /** 封面衍生强调色：取封面主色相，按深浅模式固定到「鲜明但不刺眼」的明度，驱动播放键/进度/歌词高亮；无封面时用主题 info */
+    private int coverAccent() {
+        int[] d = coverDominant();
+        if (d == null) return info;
+        boolean dark = (ink == 0xffeef1f6);
+        float h = rgbHue(d[0] / 255f, d[1] / 255f, d[2] / 255f);
+        float s = 0.70f;
+        float v = dark ? 0.95f : 0.70f; // 深色背景用亮强调色、浅色背景用深强调色，保证对比
+        return hsl2i(h, s, v, 1f);
     }
     // ---- 颜色工具 ----
     private int[] hexRgb(String h) { if (h == null || h.length() != 7) return null; try { int n = Integer.parseInt(h.substring(1), 16); return new int[]{ (n >> 16) & 255, (n >> 8) & 255, n & 255 }; } catch (Exception e) { return null; } }
