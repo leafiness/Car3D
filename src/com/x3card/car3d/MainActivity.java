@@ -274,6 +274,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             case "mBgMode": case "mBgCover": case "mBgColor": ui.hud.invalidate(); break; // 音乐卡片背景变了马上重画
             case "model": break;
             case "stats": data.extra(statFields()); view.queueEvent(() -> p.setting(k)); break;
+            case "tells": if (ui.hud != null) ui.hud.refilterTells(); break; // 车况图标勾选后立即重画
             default: view.queueEvent(() -> p.setting(k));
         }
         ui.panel.refresh(k);

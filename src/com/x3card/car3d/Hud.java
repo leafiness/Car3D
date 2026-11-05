@@ -145,11 +145,18 @@ final class Hud extends View {
     void setTop(String g, boolean on, String s, String pw, boolean lv) { gear = g; speedOn = on; speed = s; power = pw; live = lv; invalidate(); }
     void setStats(List<String[]> l) { stats = l; invalidate(); }
     void setStatus(List<CarPage.St> l, boolean open) { status = l; stOpen = open; invalidate(); }
+    private List<CarStat.Item> allTellL, allTellR; // 全量车况图标（缓存，改 tells 设置后立即重过滤）
     void setTells(List<CarStat.Item> l, List<CarStat.Item> r) {
-        List<String> on = S.tells(); // 设置里勾了的车况图标才显示
+        allTellL = l; allTellR = r; // 记住全量列表，设置改了 tells 后无需等车况数据刷新就能重过滤
+        refilterTells();
+    }
+    /** 按当前 S.tells() 重新过滤车况图标：改「车况图标」设置后立即生效，不必等下一次车况数据回调 */
+    void refilterTells() {
+        if (allTellL == null || allTellR == null) return;
+        List<String> on = S.tells();
         tl = new ArrayList<>(); tr = new ArrayList<>();
-        for (CarStat.Item it : l) if (on.contains(it.id)) tl.add(it);
-        for (CarStat.Item it : r) if (on.contains(it.id)) tr.add(it);
+        for (CarStat.Item it : allTellL) if (on.contains(it.id)) tl.add(it);
+        for (CarStat.Item it : allTellR) if (on.contains(it.id)) tr.add(it);
         invalidate();
     }
     void setSys(List<CarStat.Sys> s) { sys = s; invalidate(); }
