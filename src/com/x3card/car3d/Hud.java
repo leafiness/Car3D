@@ -942,14 +942,15 @@ final class Hud extends View {
                 return;
             }
             float pad = r(0.25f);
-            float lyCap = portrait ? r(3.3f) : r(4.6f); // 歌词区高度上限：宽屏给更高，让歌词上下更舒展（右半屏居中，不压左半屏播控）
+            // 歌词舞台：歌词是主视觉，给它更大的区域；左侧封面/播控退为辅助。背景仍由 drawMusicBackground 按原逻辑绘制，不改。
+            float lyCap = portrait ? r(3.8f) : r(6.0f);
             if (portrait) {
-                float mid = cardTop + (cardBottom - cardTop) * 0.50f;
+                float mid = cardTop + (cardBottom - cardTop) * 0.58f; // 竖屏：歌词占上半区约六成
                 float ah = mid - cardTop - pad * 2, lyH = Math.min(ah, lyCap);
                 drawLyrics(c, cardLeft + pad, cardTop + pad + (ah - lyH) / 2f, cardRight - cardLeft - pad * 2, lyH);
                 drawController(c, cardLeft + pad, mid + pad, cardRight - cardLeft - pad * 2, cardBottom - mid - pad * 2, false);
             } else {
-                float split = (cardLeft + cardRight) / 2f; // 宽屏：左右各占一半
+                float split = cardLeft + (cardRight - cardLeft) * 0.40f; // 宽屏：歌词占右侧六成，播控占左侧四成
                 drawController(c, cardLeft + pad, cardTop + pad, split - cardLeft - pad * 1.5f, cardBottom - cardTop - pad * 2, true);
                 float ah = cardBottom - cardTop - pad * 2, lyH = Math.min(ah, lyCap);
                 drawLyrics(c, split + pad * 0.5f, cardTop + pad + (ah - lyH) / 2f, cardRight - split - pad * 1.5f, lyH);
@@ -957,13 +958,13 @@ final class Hud extends View {
     }
     private void drawController(Canvas c, float x, float y, float w, float h, boolean center) {
         if (!center) { drawControllerPortrait(c, x, y, w, h); return; }
-        // ===== 宽屏（图1）：左半屏内——封面居左、歌名/歌手在右、进度条+时间一行、播控按钮居中一行，整组垂直居中 =====
-        float br = Math.min(r(0.32f), h * 0.16f);
+        // ===== 宽屏：歌词舞台——左侧封面/曲名/播控退为辅助，不画任何面板，原有整页背景直接透出 =====
+        float br = Math.min(r(0.27f), h * 0.13f);
         float compW = w * 3f / 4f;                 // 组件横向占左半屏的四分之三
         final int acc = coverAccent();              // 封面衍生强调色（驱动播放键/进度/歌词）
         float gcx = x + (w - compW) / 2f;          // 组件在左半屏内水平居中
-        float cov = Math.min(Math.min(h * 0.46f, compW * 0.3f), r(1.9f)); // 封面：分屏等窄窗口下按组件宽 30% 收缩，全宽屏仍由 1.9rem 兜底
-        float barGap = r(0.20f), barH = r(0.05f), timeGap = r(0.42f), btnGap = r(0.22f);
+        float cov = Math.min(Math.min(h * 0.34f, compW * 0.24f), r(1.45f)); // 封面缩小，让歌词成为主视觉
+        float barGap = r(0.20f), barH = r(0.035f), timeGap = r(0.42f), btnGap = r(0.22f);
         // 整组垂直居中；区域不够高时按比例缩小封面与按钮（矮屏不再顶到上沿，保证真正居中）
         float fixedH = barGap + timeGap + btnGap; // 进度条厚在间隙内，不计入视觉组高
         float flexH = cov + br * 2.5f;            // 2.5=中间键(br*1.25)直径
@@ -973,10 +974,10 @@ final class Hud extends View {
         }
         float groupH = cov + fixedH + br * 2.5f;
         float top = y + Math.max(0, h - groupH) / 2f; // 宽屏：整组在左半屏垂直居中（图1）
-        float tf = 0.34f, af = 0.26f;
+        float tf = 0.30f, af = 0.23f;
         float textW = Math.max(r(0.5f), compW - cov - r(0.18f));
         float gx = gcx, tx = gx + cov + r(0.18f);
-        drawGlassPanel(c, gx - r(0.18f), top - r(0.22f), gx + compW + r(0.18f), top + groupH + r(0.22f), r(0.30f));
+        // 歌词舞台不加面板：背景颜色完全沿用 drawMusicBackground 的原有逻辑
         drawCover(c, gx, top, cov);
         p.setTypeface(ui700); p.setTextSize(r(tf)); p.setColor(ink);
         List<String> titleLines = wrapTitle(mTitle, textW);
@@ -1030,7 +1031,7 @@ final class Hud extends View {
     }
     /** 窄屏（图2）：横向播控条——左封面、中歌名/歌手、右播控按钮（同一行），下方整行进度条+时间（右端合并显示） */
     private void drawControllerPortrait(Canvas c, float x, float y, float w, float h) {
-        float br = Math.min(r(0.26f), h * 0.20f);
+        float br = Math.min(r(0.23f), h * 0.17f);
         final int acc = coverAccent();              // 封面衍生强调色
         float cov = Math.min(Math.min(w * 0.22f, h * 0.66f), r(1.5f));   // 封面尺寸
         float gap = br * 2.6f, btnW = gap * 2f + br * 2f;       // 右侧按钮组总宽（gap 留出中间大键空间）
@@ -1041,7 +1042,7 @@ final class Hud extends View {
         float groupH = cov + r(0.18f) + r(0.05f) + r(0.34f);    // 封面行 + 间距 + 进度条 + 时间
         float top = y + Math.max(0, h - groupH) / 2f;           // 整条在控制器区域内垂直居中（图2 中部偏下）
         float cy = top + cov / 2f;                             // 封面/文字/按钮的水平中线
-        drawGlassPanel(c, x - r(0.14f), top - r(0.16f), x + w + r(0.14f), top + groupH + r(0.16f), r(0.30f));
+        // 歌词舞台不加面板：背景颜色完全沿用 drawMusicBackground 的原有逻辑
         drawCover(c, x, top, cov);
         p.setTypeface(ui700); p.setTextSize(r(tf)); p.setColor(ink);
         List<String> titleLines = wrapTitle(mTitle, textW);
@@ -1073,7 +1074,7 @@ final class Hud extends View {
         drawPrevIcon(c, prevR.centerX(), cy, br * 0.5f, acc);
         drawPlayPauseIcon(c, playR.centerX(), cy, brP * 0.5f, playIcon);
         drawNextIcon(c, nextR.centerX(), cy, br * 0.5f, acc);
-        float barY = top + cov + r(0.18f), barH = r(0.05f), pw = w, px = x;
+        float barY = top + cov + r(0.18f), barH = r(0.035f), pw = w, px = x;
         float prog = mDur > 0 ? (float) livePos() / mDur : 0;
         sp.setStyle(Paint.Style.FILL); sp.setColor(line);
         c.drawRoundRect(px, barY, px + pw, barY + barH, r(0.03f), r(0.03f), sp);
@@ -1092,21 +1093,7 @@ final class Hud extends View {
         c.drawText(fmtTime(livePos()) + " / " + fmtTime(mDur), px + pw, barY + r(0.30f), p);
         p.setTextAlign(Paint.Align.LEFT);
     }
-    /** 玻璃拟态面板：半透明填充 + 描边 + 顶部内高光（无法毛玻璃模糊，用半透明叠层模拟；底色随深浅模式取黑/白低透明） */
-    private void drawGlassPanel(Canvas c, float x0, float y0, float x1, float y1, float rad) {
-        boolean dark = (ink == 0xffeef1f6);
-        sp.setStyle(Paint.Style.FILL);
-        sp.setColor(dark ? withA(0xffffffff, 0.10f) : withA(0xff000000, 0.07f));
-        c.drawRoundRect(x0, y0, x1, y1, rad, rad, sp);
-        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(Math.max(1, dens));
-        sp.setColor(dark ? withA(0xffffffff, 0.22f) : withA(0xff000000, 0.12f));
-        c.drawRoundRect(x0, y0, x1, y1, rad, rad, sp);
-        // 顶部内高光：贴近上沿画一圈更亮的描边，做出玻璃反光
-        sp.setStrokeWidth(Math.max(1, dens * 1.5f));
-        sp.setColor(withA(0xffffffff, dark ? 0.16f : 0.55f));
-        c.drawRoundRect(x0 + r(0.03f), y0 + r(0.03f), x1 - r(0.03f), y1 - r(0.03f), rad * 0.85f, rad * 0.85f, sp);
-        sp.setStyle(Paint.Style.FILL);
-    }
+    /** 歌词舞台：不再绘制任何半透明面板，音乐页背景完全由 drawMusicBackground 按原有逻辑铺满 */
     /** 歌词字号 / 行高：竖屏 / 宽屏各自的绝对字号（数值即百分之一 rem，同网页版 lyricSize，14~52），行高 = 字号 × 1.42 + 少量行距（同网页版 CSS line-height，不再单独设行间距） */
     private float[] lyricMetrics() {
         int size = portrait ? 23 : 27;
@@ -1147,9 +1134,8 @@ final class Hud extends View {
         for (String p : s.split("\n", -1)) { String t = p.trim(); if (!t.isEmpty()) out.add(t); }
         return out;
     }
-    /** 歌词行渲染（整首或快照累积共用）：正在播放的句子垂直居中并高亮。
-     *  字号 fk 缩放文字、行数 rows 决定同时可见几行、行间距 gap 是行高相对字号的倍率；三者分工清晰不再互相打架。
-     *  单行显示不开就按宽度自动折行（不再省略）。区域放不下 rows 行时整组等比缩小，保证"行数"设置始终生效。 */
+    /** 歌词舞台：当前句放大并逐字扫字高亮（已唱强调色 / 未唱主文字色），其余句缩小弱化；
+     *  整首歌词有时间戳时按播放进度扫字，没有时间轴则整句强调色。单行放不下按当前句最大字号折行，行数设置始终生效。 */
     private void drawLyricLines(Canvas c, float x, float y, float w, float h, List<String> list, int cur) {
         if (list.isEmpty()) return;
         int clip = c.save();
@@ -1159,17 +1145,19 @@ final class Hud extends View {
         rows = Math.max(1, Math.min(8, rows)); // 歌词最多显示 8 行（设置面板档位也截到 8）
         float[] m = lyricMetrics();
         float fontPx = m[0], lh = m[1];
-        // 行高取「自然行高」与「h/rows」的较小值；若即便用最小行高（字不叠字）rows 行仍放不下，就等比缩小字号，
-        // 让 rows 行正好落在区域 h 内：行数设置始终生效、字不叠字、绝不溢出（同网页版整组缩放）
-        float minLh = fontPx * 1.2f; // 含当前句放大 1.06 倍后仍字不叠字的最小行高
+        // 行高取「自然行高」与「h/rows」的较小值；放不下 rows 行就等比缩小字号，保证不叠字不溢出
+        float minLh = fontPx * 1.2f;
         lh = Math.min(lh, h / rows);
         if (lh < minLh) { float k = h / (minLh * rows); fontPx *= k; lh = minLh * k; }
+        // 当前句字号：最大 1.35 倍，且不超过行高的 90%（不叠字）；区域太矮时至少保持原字号
+        float curFont = Math.min(fontPx * 1.35f, Math.max(fontPx, lh * 0.90f));
+        float subFont = fontPx * 0.86f;
 
-        // 每句按宽度自动换行（单行显示不开就折成多行），记录每个物理行属于哪一句
+        // 每句按「当前句最大字号」折行，保证放大后的当前句也不溢出；记录每个物理行属于哪一句
         List<String> phys = new ArrayList<>();
         List<Integer> owner = new ArrayList<>();
         int[] firstPhys = new int[list.size()];
-        p.setTypeface(ui700); p.setTextSize(fontPx); // 按最宽情况（加粗、满字号）折行，保证不溢出
+        p.setTypeface(ui700); p.setTextSize(curFont);
         for (int i = 0; i < list.size(); i++) {
             firstPhys[i] = phys.size();
             String ln = list.get(i);
@@ -1179,18 +1167,50 @@ final class Hud extends View {
         if (phys.isEmpty()) { c.restore(); return; }
         int curPhys = (cur >= 0 && cur < list.size()) ? firstPhys[cur] : phys.size() / 2; // 当前句的首物理行作为窗口中心
 
+        // 当前句已唱比例：整首歌词带时间戳时按「本句起点 → 下一句起点」线性推进；拿不到就退化为整句强调色
+        float sung = -1f;
+        if (!lyrics.isEmpty() && cur >= 0 && cur < lyrTimes.size()) {
+            long st = lyrTimes.get(cur), en = -1;
+            for (int j = cur + 1; j < lyrTimes.size(); j++) {
+                long t = lyrTimes.get(j);
+                if (t >= 0) { en = t; break; }
+            }
+            if (st >= 0 && en > st) {
+                sung = (float) (livePos() - st) / (float) (en - st);
+                if (sung < 0f) sung = 0f; else if (sung > 1f) sung = 1f;
+            }
+        }
+
         float midY = y + h / 2f;
         int half = rows / 2;
         int lo = curPhys - half, hi = curPhys + half; // 以当前句为中心、共 rows 行的窗口
         p.setTextAlign(Paint.Align.CENTER);
-        int accL = coverAccent(); // 歌词当前句用强调色高亮（同网页版渐变高亮）
+        int accL = coverAccent(); // 封面衍生强调色
         for (int i = lo; i <= hi; i++) {
             if (i < 0 || i >= phys.size()) continue;
-            boolean on = owner.get(i) == cur;
-            p.setTypeface(on ? ui700 : ui500);
-            p.setTextSize(on ? fontPx * 1.06f : fontPx); // 当前句放大 6%，同网页版 transform: scale(1.06)
-            p.setColor(on ? accL : withA(mute, 0.72f));    // 当前句强调色、其余灰字 72% 透明，同网页版
-            c.drawText(phys.get(i), x + w / 2, baseline(midY + (i - curPhys) * lh, p), p);
+            String txt = phys.get(i);
+            float lineY = midY + (i - curPhys) * lh;
+            if (owner.get(i) == cur) {
+                p.setTypeface(ui700); p.setTextSize(curFont);
+                float by = baseline(lineY, p);
+                if (sung >= 0f && txt.length() > 1) {
+                    // 逐字扫字：折行后的每个物理行按同一比例切分（长句折行时视觉上同步推进）
+                    int cut = Math.max(1, Math.min(txt.length() - 1, Math.round(txt.length() * sung)));
+                    String done = txt.substring(0, cut), rest = txt.substring(cut);
+                    p.setTextAlign(Paint.Align.LEFT);
+                    float sx = x + w / 2f - p.measureText(txt) / 2f;
+                    p.setColor(accL); c.drawText(done, sx, by, p);
+                    p.setColor(ink); c.drawText(rest, sx + p.measureText(done), by, p);
+                    p.setTextAlign(Paint.Align.CENTER);
+                } else {
+                    p.setColor(accL);
+                    c.drawText(txt, x + w / 2, by, p);
+                }
+            } else {
+                p.setTypeface(ui500); p.setTextSize(subFont);
+                p.setColor(withA(mute, 0.52f));
+                c.drawText(txt, x + w / 2, baseline(lineY, p), p);
+            }
         }
         c.restore();
         p.setTextAlign(Paint.Align.LEFT);
