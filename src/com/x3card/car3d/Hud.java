@@ -1182,8 +1182,10 @@ final class Hud extends View {
         }
 
         float midY = y + h / 2f;
-        int half = rows / 2;
-        int lo = curPhys - half, hi = curPhys + half; // 以当前句为中心、共 rows 行的窗口
+        // 窗口长度必须恒等于 rows：原先 cur±half 配闭区间会画 2*(rows/2)+1 行，偶数档多出 1 行。
+        // 偶数档让当前句略偏上、下方多显示一句，优先看到即将唱到的歌词。
+        int above = (rows - 1) / 2;
+        int lo = curPhys - above, hi = lo + rows - 1;
         p.setTextAlign(Paint.Align.CENTER);
         int accL = coverAccent(); // 封面衍生强调色
         for (int i = lo; i <= hi; i++) {
