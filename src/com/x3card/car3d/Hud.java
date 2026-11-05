@@ -1134,26 +1134,28 @@ final class Hud extends View {
         for (String p : s.split("\n", -1)) { String t = p.trim(); if (!t.isEmpty()) out.add(t); }
         return out;
     }
-    /** 歌词舞台：当前句放大并逐字扫字高亮（已唱强调色 / 未唱主文字色），其余句缩小弱化；
-     *  整首歌词有时间戳时按播放进度扫字，没有时间轴则整句强调色。单行放不下按当前句最大字号折行，行数设置始终生效。 */
+    /** 歌词舞台：固定视口 + 行槽模型（同网页版 .mp-ly：窗口高度 = 行高 × N、overflow hidden）。
+     *  行数由「窗口裁出几个行槽」决定，与循环画几次无关，所以设置几行就恒显示几行；
+     *  整列平移把当前句送进第 above 个槽，开头贴顶、结尾贴底，窗口始终填满。
+     *  当前句放大并逐字扫字高亮（已唱强调色 / 未唱主文字色），其余句缩小弱化；无时间轴则整句强调色。 */
     private void drawLyricLines(Canvas c, float x, float y, float w, float h, List<String> list, int cur) {
         if (list.isEmpty()) return;
-        int clip = c.save();
-        c.clipRect(x, y, x + w, y + h); // 歌词严格裁在区域内：行数再多也不溢出到标题 / 控制器
         int rows = 5;
         try { rows = Integer.parseInt(S.str(portrait ? "lyricLinesP" : "lyricLinesL").trim()); } catch (Exception ignored) { }
-        rows = Math.max(1, Math.min(8, rows)); // 歌词最多显示 8 行（设置面板档位也截到 8）
-        float[] m = lyricMetrics();
-        float fontPx = m[0], lh = m[1];
-        // 行高取「自然行高」与「h/rows」的较小值；放不下 rows 行就等比缩小字号，保证不叠字不溢出
-        float minLh = fontPx * 1.2f;
-        lh = Math.min(lh, h / rows);
-        if (lh < minLh) { float k = h / (minLh * rows); fontPx *= k; lh = minLh * k; }
-        // 当前句字号：最大 1.35 倍，且不超过行高的 90%（不叠字）；区域太矮时至少保持原字号
-        float curFont = Math.min(fontPx * 1.35f, Math.max(fontPx, lh * 0.90f));
-        float subFont = fontPx * 0.86f;
+        rows = Math.max(1, Math.min(8, rows)); // 档位 1～8
 
-        // 每句按「当前句最大字号」折行，保证放大后的当前句也不溢出；记录每个物理行属于哪一句
+        // 行槽：槽高取自然行高，但不超过 h/rows；窗口高度 = 槽高 × rows，在可用区内居中
+        float[] m = lyricMetrics();
+        float fontPx = m[0];
+        float slot = Math.min(m[1], h / rows);
+        float minLh = fontPx * 1.2f;
+        if (slot < minLh) fontPx *= slot / minLh; // 区域太矮就等比缩字号，保证不叠字
+        float curFont = Math.min(fontPx * 1.35f, slot * 0.90f);
+        float subFont = fontPx * 0.86f;
+        float viewH = slot * rows;
+        float viewY = y + (h - viewH) / 2f;
+
+        // 每句按「当前句最大字号」折行，保证放大后也不溢出；每个物理行占一个槽
         List<String> phys = new ArrayList<>();
         List<Integer> owner = new ArrayList<>();
         int[] firstPhys = new int[list.size()];
@@ -1164,10 +1166,15 @@ final class Hud extends View {
             List<String> wl = wrapText(ln == null || ln.isEmpty() ? "♪" : ln, w);
             for (String s : wl) { phys.add(s); owner.add(i); }
         }
-        if (phys.isEmpty()) { c.restore(); return; }
-        int curPhys = (cur >= 0 && cur < list.size()) ? firstPhys[cur] : phys.size() / 2; // 当前句的首物理行作为窗口中心
+        if (phys.isEmpty()) return;
+        int curPhys = (cur >= 0 && cur < list.size()) ? firstPhys[cur] : phys.size() / 2;
 
-        // 当前句已唱比例：整首歌词带时间戳时按「本句起点 → 下一句起点」线性推进；拿不到就退化为整句强调色
+        // 整列平移：当前句落在第 above 个槽；钳制保证开头贴顶、结尾贴底，窗口恒有 rows 行
+        int above = (rows - 1) / 2;
+        float shift = (above - curPhys) * slot;
+        shift = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, shift));
+
+        // 当前句已唱比例：整首歌词带时间戳时按「本句起点 → 下一句起点」线性推进；拿不到就整句强调色
         float sung = -1f;
         if (!lyrics.isEmpty() && cur >= 0 && cur < lyrTimes.size()) {
             long st = lyrTimes.get(cur), en = -1;
@@ -1181,22 +1188,19 @@ final class Hud extends View {
             }
         }
 
-        float midY = y + h / 2f;
-        // 窗口长度必须恒等于 rows：原先 cur±half 配闭区间会画 2*(rows/2)+1 行，偶数档多出 1 行。
-        // 偶数档让当前句略偏上、下方多显示一句，优先看到即将唱到的歌词。
-        int above = (rows - 1) / 2;
-        int lo = curPhys - above, hi = lo + rows - 1;
+        int clip = c.save();
+        c.clipRect(x, viewY, x + w, viewY + viewH); // ★ 窗口高度 = 槽高 × N：裁出恰好 N 行
         p.setTextAlign(Paint.Align.CENTER);
         int accL = coverAccent(); // 封面衍生强调色
-        for (int i = lo; i <= hi; i++) {
-            if (i < 0 || i >= phys.size()) continue;
+        for (int i = 0; i < phys.size(); i++) {
+            float cy = viewY + (i + 0.5f) * slot + shift;
+            if (cy < viewY - slot || cy > viewY + viewH + slot) continue; // 视口外跳过
             String txt = phys.get(i);
-            float lineY = midY + (i - curPhys) * lh;
             if (owner.get(i) == cur) {
                 p.setTypeface(ui700); p.setTextSize(curFont);
-                float by = baseline(lineY, p);
+                float by = baseline(cy, p);
                 if (sung >= 0f && txt.length() > 1) {
-                    // 逐字扫字：折行后的每个物理行按同一比例切分（长句折行时视觉上同步推进）
+                    // 逐字扫字：折行后的每个物理行按同一比例切分
                     int cut = Math.max(1, Math.min(txt.length() - 1, Math.round(txt.length() * sung)));
                     String done = txt.substring(0, cut), rest = txt.substring(cut);
                     p.setTextAlign(Paint.Align.LEFT);
@@ -1211,7 +1215,7 @@ final class Hud extends View {
             } else {
                 p.setTypeface(ui500); p.setTextSize(subFont);
                 p.setColor(withA(mute, 0.52f));
-                c.drawText(txt, x + w / 2, baseline(lineY, p), p);
+                c.drawText(txt, x + w / 2, baseline(cy, p), p);
             }
         }
         c.restore();

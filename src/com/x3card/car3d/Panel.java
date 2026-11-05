@@ -175,7 +175,7 @@ final class Panel extends Sheet {
         }
         // 歌词（对齐「背景模式」式排布：竖屏 / 宽屏各占一条竖排，标题一行、提示词一行、行数 / 字号步进器一行）
         r = row(true);
-        r.addView(label("竖屏歌词", null, "行数 1～15 · 字号 14～52，越大字越大"));
+        r.addView(label("竖屏歌词", null, "行数 1～8 · 字号 14～52，越大字越大"));
         r.addView(lyricPair(Settings.LYR_ROWS, "lyricLinesP", Settings.LYR_SIZE, "lyricSizeP"));
         r = row(true);
         r.addView(label("宽屏歌词", null, "全屏 / 七分屏用这一组"));
