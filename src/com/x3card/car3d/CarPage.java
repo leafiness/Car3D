@@ -1873,7 +1873,7 @@ final class CarPage implements Stage.Page {
         }
         out.stats(items);
     }
-    CarStat.UnitOf unitOf; // 由 MainActivity 注入真实实现（data::unit）；红绿灯实验分支遗留的 null stub 已移除
+    CarStat.UnitOf unitOf; // 由 MainActivity 注入真实实现（data::unit）
     /** 电量 / 油量：[id, 名字, 数, 单位, 进度条比例, 进度条颜色类] */
     private static String[] energy(String id, String label, Double v) {
         boolean ok = v != null;
