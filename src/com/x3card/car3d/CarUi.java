@@ -164,17 +164,33 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         float carVis = Math.abs(ph - 1f);           // 1=车模页全显、0=音乐页全隐
         float a = blocked ? 0f : carVis;
         tags.setAlpha(a);
-        tags.setVisibility(a < 0.02f ? View.GONE : View.VISIBLE);
+        tags.setVisibility(lgMode || a < 0.02f ? View.GONE : View.VISIBLE);
     }
     /** 全屏键："full" 全屏、"small" 恢复小屏、"" 没有（同 fullscreen.js：在全屏页里是恢复小屏） */
     void setFsMode(String m) {
         fsMode = m;
         fs.d = "small".equals(m) ? FS_SMALL : FS_FULL;
-        fs.setVisibility(m.isEmpty() ? GONE : VISIBLE);
+        fs.setVisibility(lgMode || m.isEmpty() ? GONE : VISIBLE);
         hud.setFs(!m.isEmpty());
         panel.setFs("small".equals(m));
         fs.invalidate();
         post(this::relayout); // 奖杯键的位置看有没有全屏键
+    }
+    /** 第三页（琉光）：车况这一层整个让开，只剩琉光自己的场景和界面。
+     *  Hud 不设 GONE（它还要把媒体快照推给琉光场景），自己按页面相位不画 */
+    private boolean lgMode;
+    void setLgMode(boolean on) {
+        if (on == lgMode) return;
+        lgMode = on;
+        if (on && panelOn) panel(false); // 设置面板开着先收起来
+        int v = on ? GONE : VISIBLE;
+        gear.setVisibility(v);
+        cup.setVisibility(v);
+        fs.setVisibility(on || fsMode.isEmpty() ? GONE : VISIBLE);
+        toast.setVisibility(on ? GONE : VISIBLE);
+        achToast.setVisibility(on ? GONE : VISIBLE);
+        tags.setVisibility(on ? GONE : (Math.abs(hud.pagePhase() - 1f) < 0.02f ? GONE : VISIBLE));
+        if (on) achToast.clear();
     }
     /** 待庆祝的成就几枚（奖杯键上的红点） */
     void setBadge(int n) { cup.badge = n; cup.invalidate(); }

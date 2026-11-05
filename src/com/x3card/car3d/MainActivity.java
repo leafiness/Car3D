@@ -71,6 +71,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     private boolean started, slept;
     private int pageIdx; // 当前页：0 车况 / 1 音乐 / 2 琉光
     private com.x3card.car3d.lg.LgHost lgHost;
+    private android.view.View lgUi; // 琉光自己的那层界面（齿轮、全屏键、设置面板），只在第三页显示
+    private boolean lgEntered;
     private long fsAt;
 
     /** 全屏页（FullActivity）是真；多窗口里、从桌面直接打开的是假 */
@@ -130,7 +132,14 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         S.on(k -> { if (Looper.myLooper() == Looper.getMainLooper()) setting(k); else main.post(() -> setting(k)); });
         data.extra(statFields());
         applyBar();
+        main.postDelayed(lgTheme, 60000); // 琉光页的日夜：设置选了「跟随车机」时按钟点看一次
     }
+    private final Runnable lgTheme = new Runnable() {
+        @Override public void run() {
+            if (lgHost != null && started) lgHost.tickTheme();
+            main.postDelayed(this, 60000);
+        }
+    };
 
     /** 新的一套画布（第一次、换抗锯齿时）：Stage、CarPage 跟着画布走（GL 的东西都在画布的上下文里） */
     private void newScene() {
@@ -149,9 +158,21 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         final float tm = ui.hud.msgTop / getResources().getDisplayMetrics().density;
         view.queueEvent(() -> { p.setCar(car); p.setSys(sys); if (tm > 0) p.setTagMax(tm); });
         stage.setPage(page);
-        lgHost = new com.x3card.car3d.lg.LgHost(view, getResources().getDisplayMetrics().density);
+        // 第三页：琉光整套（场景 + 它自己的界面）。换画布重建时先把上一套的界面摘掉
+        if (lgUi != null) { ui.removeView(lgUi); lgUi = null; }
+        if (lgHost != null) lgHost.quit();
+        lgHost = new com.x3card.car3d.lg.LgHost(view, this, getResources().getDisplayMetrics().density, new com.x3card.car3d.lg.LgHost.Act() {
+            @Override public void media(String cmd) { data.mediaCmd(cmd); }
+            @Override public void seek(long ms) { ui.toast("这台车跳不了歌词", 2600); }
+            @Override public void fullscreen() { MainActivity.this.fullscreen(); }
+            @Override public void toast(String msg) { ui.toast(msg, 2800); }
+        });
         stage.setLg(lgHost);
         ui.hud.setLgHost(lgHost);
+        lgUi = lgHost.uiView();
+        lgUi.setVisibility(android.view.View.GONE);
+        ui.addView(lgUi, new FrameLayout.LayoutParams(-1, -1));
+        lgEntered = false;
         // 同级页面：Hud 的 pageOffset 变化时，只把车模本身往左滑出/滑回（车况背景 Bg 保持满屏固定），
         // 这样音乐背景半透明淡入时下方始终是车况背景、不会露出黑底亮暗缝；GL 停画按 pageOffset 实时决定——
         // 只有完全停在音乐页（且非拖拽）才停，拖拽/滑动途中保持渲染，车模跟着平移进出
@@ -165,6 +186,13 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             if (lgHost != null) {
                 float d = getResources().getDisplayMetrics().density;
                 lgHost.size(view.getWidth() / d, view.getHeight() / d);
+            }
+            // 第三页：车况那一整套（右上角的键、胎压标签、提示）全藏起来，换成琉光自己的界面
+            if (onLg != lgEntered) {
+                lgEntered = onLg;
+                if (lgUi != null) lgUi.setVisibility(onLg ? android.view.View.VISIBLE : android.view.View.GONE);
+                ui.setLgMode(onLg);
+                if (lgHost != null) { if (onLg) lgHost.enter(); else lgHost.leavePage(); }
             }
             view.queueEvent(() -> {
                 stage.setLgMode(onLg);
@@ -182,6 +210,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         File f = new File(getCacheDir(), "update.apk"); if (f.exists()) f.delete(); // 清掉上一次更新残留的缓存包
         reload();
         ui.setFsMode(isFull() ? "small" : onMainScreen() ? "" : "full");
+        if (lgHost != null) lgHost.setFsMode(isFull() ? "small" : onMainScreen() ? "" : "full");
         if (!slept) wake(true);
         host.start();
         if (isFull()) { MainActivity p = pip.get(); if (p != null && p != this) p.sleep(true); }
@@ -271,6 +300,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         for (String k : KEYS) if (!String.valueOf(before.get(k)).equals(String.valueOf(S.get(k)))) S.emit(k);
         final CarPage p = page;
         view.queueEvent(p::platesFromStore); // 车牌：全屏页、小窗口另一边可能改过
+        if (lgHost != null) lgHost.reloadSettings(); // 琉光那套设置也是两边共用一份
     }
     private static final String[] KEYS = { "paint", "rim", "caliper", "finish", "paintHex", "rimHex", "calHex", "theme", "bg", "bgDim", "viewAz", "viewEl", "viewZoom", "viewFov",
         "stats", "labels", "intro", "quality", "fps", "aa", "fsBar",

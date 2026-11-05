@@ -223,6 +223,11 @@ final class Hud extends View {
     // ================= 画 =================
     @Override protected void onDraw(Canvas c) {
         if (pageIdx == 2) pushLg(); // 第三页：把当前媒体快照推给琉光 3D 场景
+        // 第三页整个交给琉光：车况这一点东西都不画（顶栏、车况图标、车速、底部数据、页面提示全没有）。
+        // 滑动切页时按 lgAlpha 淡出淡入，且在 GL 切换点（phase 1.5 / 2.5）正好淡到 0，不会有一层车况盖在琉光上
+        float lgA = lgAlpha();
+        if (lgA <= 0.001f) return;
+        int lgSave = lgA < 0.999f ? c.saveLayerAlpha(0, 0, W, H, Math.round(255 * lgA), Canvas.ALL_SAVE_FLAG) : -1;
         // 顶栏、车况图标、车速、下面那行字在两个页面都照常显示，浮在音乐整页背景之上
         // 底部车况数据固定不动；其余元素整体随 topShift 上移（drawStats 在平移之外单独绘制）
         float ph = phase; // 折回 [0,2) 的循环相位：0/2=车模页、1=音乐页（越过边界即循环到另一页）
@@ -275,6 +280,16 @@ final class Hud extends View {
         c.restore();
         drawStats(c); // 底部车况数据不随上移（配色随背景模式走：深浅模式用主题色，否则按背景明暗）
         if (k > 0.01f && !"theme".equals(S.str("mBgMode"))) palette(dk0); // 还原全局主题色（含 darkK），不影响下一帧车况页与深浅过渡动画
+        if (lgSave >= 0) c.restore();
+    }
+    /** 车况层有多可见：1 = 车况页（含音乐页），0 = 琉光页。
+     *  与 Stage 的 GL 切换点对齐（phase 1.5 进琉光、2.5 出琉光）：到那两处正好淡到 0，琉光页上不会浮着一层车况 */
+    private float lgAlpha() {
+        float ph = phase;
+        if (ph > 1f && ph <= 1.5f) return 1f - (ph - 1f) / 0.5f;   // 音乐页 → 琉光页：淡出
+        if (ph > 1.5f && ph <= 2f) return 0f;                        // 停在琉光页
+        if (ph > 2f && ph < 2.5f) return (ph - 2f) / 0.5f;           // 琉光页 → 车况页：淡入
+        return 1f;
     }
     private static int withA(int c, float a) { return (Math.round((c >>> 24) * a) << 24) | (c & 0xffffff); }
 
@@ -1565,6 +1580,7 @@ final class Hud extends View {
     // ================= 手势：只接可点的地方 =================
     private int downOn = -1;
     @Override public boolean onTouchEvent(MotionEvent e) {
+        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：手势交给琉光，只有上/下两条窄边留给切页
         float x = e.getX();
         float y = e.getY() - topShift; // 转入被上移元素的坐标系（底部数据仍用屏幕坐标）
         float yScreen = e.getY();
@@ -1634,6 +1650,57 @@ final class Hud extends View {
             // d == 21：原卡片空白区已改为 20（可拖拽切页），此处不再出现
         }
         if (e.getActionMasked() == MotionEvent.ACTION_CANCEL) { downOn = -1; if (dragging) { dragging = false; page = Math.round(page); syncPhase(); invalidate(); } } // 拖拽被中断（如通话）：page 收尾到最近整数页，避免卡半页
+        return true;
+    }
+
+    // ================= 第三页（琉光）：手势整个交给琉光，只留窄边用来切页 =================
+    /**
+     * 琉光页自己不画任何东西，触摸要原样转给 3D 场景（点播放键、点封面、上下翻歌词、左右拖转场景都在那边）。
+     * 切页留三条看不见的热区：上边缘、下边缘、左右两边——都是琉光里没有可点东西的地方，
+     * 在这几处横滑就切回音乐页 / 车况页（跟手 + 甩动落页，和其它两页一样）。
+     */
+    private boolean lgTouch(MotionEvent e) {
+        float x = e.getX(), y = e.getY();
+        int a = e.getActionMasked();
+        if (a == MotionEvent.ACTION_DOWN) {
+            downX = x; downY = y;
+            boolean edge = y < r(0.55f) || y > H - r(0.75f) || x < r(0.6f) || x > W - r(0.6f);
+            downOn = edge ? 20 : 30;
+            if (edge) { if (offAnim != null) offAnim.cancel(); }
+            else if (lgHost != null) lgHost.touch(0, x / dens, y / dens, e.getEventTime());
+            return true;
+        }
+        if (downOn == 30) { // 琉光自己处理
+            if (lgHost != null && (a == MotionEvent.ACTION_MOVE || a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL))
+                lgHost.touch(a == MotionEvent.ACTION_MOVE ? 1 : a == MotionEvent.ACTION_UP ? 2 : 3, x / dens, y / dens, e.getEventTime());
+            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) downOn = -1;
+            return true;
+        }
+        if (downOn != 20) return false;
+        if (a == MotionEvent.ACTION_MOVE) { // 切页：手指跟手平移三页（不封顶，越界即循环）
+            if (!dragging) { dragging = true; dragBase = page; lastX = x; lastT = e.getEventTime(); dragVel = 0; }
+            page = dragBase - (x - downX) / Math.max(1, W);
+            syncPhase();
+            long t = e.getEventTime(); float dt = t - lastT;
+            if (dt > 0) dragVel = (x - lastX) / dt;
+            lastX = x; lastT = t;
+            if (onPageOffset != null) onPageOffset.run();
+            invalidate();
+            return true;
+        }
+        if (a == MotionEvent.ACTION_UP) {
+            downOn = -1;
+            if (dragging) {
+                dragging = false;
+                int t;
+                if (dragVel < -0.5f) t = Math.round(page) + 1;     // 快速左甩 → 去下一页
+                else if (dragVel > 0.5f) t = Math.round(page) - 1; // 快速右甩 → 回上一页
+                else t = Math.round(page);                         // 否则落最近页
+                tap.pageTo(((t % 3) + 3) % 3);
+            }
+            return true;
+        }
+        if (a == MotionEvent.ACTION_CANCEL) { downOn = -1; if (dragging) { dragging = false; page = Math.round(page); syncPhase(); invalidate(); } }
         return true;
     }
 }

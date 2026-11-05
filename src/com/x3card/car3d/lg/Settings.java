@@ -86,8 +86,13 @@ final class Settings {
 
     Settings copy() {
         Settings s = new Settings();
-        s.font = font; s.theme = theme; s.fps = fps; s.aa = aa; s.render = render; s.water = water; s.art = art; s.ribbons = ribbons; s.rain = rain; s.intro = intro; s.reveal = reveal; s.fsBar = fsBar;
+        s.copyFrom(this);
         return s;
+    }
+
+    /** 从另一份拷回来（小窗口 ↔ 全屏页共用一份：回到前台时重读） */
+    void copyFrom(Settings o) {
+        font = o.font; theme = o.theme; fps = o.fps; aa = o.aa; render = o.render; water = o.water; art = o.art; ribbons = o.ribbons; rain = o.rain; intro = o.intro; reveal = o.reveal; fsBar = o.fsBar;
     }
 
     private static String pick(String v, String[] ok, String def) { return v != null && Arrays.asList(ok).contains(v) ? v : def; }
