@@ -963,7 +963,10 @@ final class Hud extends View {
         float compW = w * 3f / 4f;                 // 组件横向占左半屏的四分之三
         final int acc = coverAccent();              // 封面衍生强调色（驱动播放键/进度/歌词）
         float gcx = x + (w - compW) / 2f;          // 组件在左半屏内水平居中
-        float cov = Math.min(Math.min(h * 0.34f, compW * 0.24f), r(1.45f)); // 封面缩小，让歌词成为主视觉
+        // 窄窗口（七分屏）补偿：rem = H/10.52 只跟高度走，窗口变窄时 compW 缩水但字号不变。
+        // 用组件区自身宽高比推出 narrow（全屏≈0、七分屏≈1），只补窄窗口，不写死屏幕分辨率。
+        float narrow = Math.max(0f, Math.min(1f, (1.5f - (h > 0 ? w / h : 1.5f)) / 0.4f));
+        float cov = Math.min(Math.min(h * 0.34f, compW * (0.24f + 0.10f * narrow)), r(1.45f + 0.35f * narrow));
         float barGap = r(0.20f), barH = r(0.035f), timeGap = r(0.42f), btnGap = r(0.22f);
         // 整组垂直居中；区域不够高时按比例缩小封面与按钮（矮屏不再顶到上沿，保证真正居中）
         float fixedH = barGap + timeGap + btnGap; // 进度条厚在间隙内，不计入视觉组高
@@ -974,7 +977,7 @@ final class Hud extends View {
         }
         float groupH = cov + fixedH + br * 2.5f;
         float top = y + Math.max(0, h - groupH) / 2f; // 宽屏：整组在左半屏垂直居中（图1）
-        float tf = 0.30f, af = 0.23f;
+        float tf = 0.30f + 0.06f * narrow, af = 0.23f + 0.03f * narrow;
         float textW = Math.max(r(0.5f), compW - cov - r(0.18f));
         float gx = gcx, tx = gx + cov + r(0.18f);
         // 歌词舞台不加面板：背景颜色完全沿用 drawMusicBackground 的原有逻辑
@@ -1150,7 +1153,7 @@ final class Hud extends View {
         float slot = Math.min(m[1], h / rows);
         float minLh = fontPx * 1.2f;
         if (slot < minLh) fontPx *= slot / minLh; // 区域太矮就等比缩字号，保证不叠字
-        float curFont = Math.min(fontPx * 1.35f, slot * 0.90f);
+        float curFont = Math.min(fontPx * 1.18f, slot * 0.90f);
         float subFont = fontPx * 0.86f;
         float viewH = slot * rows;
         float viewY = y + (h - viewH) / 2f;
