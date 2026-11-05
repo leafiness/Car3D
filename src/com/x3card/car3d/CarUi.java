@@ -93,13 +93,13 @@ final class CarUi extends FrameLayout implements CarPage.Out {
                     if (cardOn) act.musicLyrics(); // 打开时补拉一次歌词
                 }
             }
-            @Override public void pageTo(boolean on) {
-                cardOn = on;
-                hud.setMusic(on, false);                 // 设 musicOn + 从当前 pageOffset 回弹动画到目标
-                setPagePhase(on ? 1f : 0f); // 胎压标签随页相位淡出：车模页全显、音乐页藏掉（与 Hud 车况 UI 同步）
+            @Override public void pageTo(int idx) {
+                cardOn = (idx == 1);
+                hud.setPageIndex(idx);                    // 0 车况 / 1 音乐 / 2 琉光
+                setPagePhase(idx == 0 ? 0f : 1f);         // 非车况页藏掉胎压标签
                 if (act != null) {
-                    act.musicCard(on, on ? -1 : 1);       // 方向已无意义（整层平移取代单模型滑动）
-                    if (on) act.musicLyrics();            // 打开时补拉一次歌词
+                    act.musicCard(cardOn, idx > 0 ? -1 : 1);
+                    if (cardOn) act.musicLyrics();
                 }
             }
             @Override public void music(String a) { if (act != null) act.music(a); }

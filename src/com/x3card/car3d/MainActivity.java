@@ -69,7 +69,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     private final HandlerThread io = new HandlerThread("io");
     private Handler ioH;
     private boolean started, slept;
-    private boolean musicPageOn; // 停在音乐卡片页：真=音乐页，假=车模页
+    private int pageIdx; // 当前页：0 车况 / 1 音乐 / 2 琉光
+    private com.x3card.car3d.lg.LgHost lgHost;
     private long fsAt;
 
     /** 全屏页（FullActivity）是真；多窗口里、从桌面直接打开的是假 */
@@ -148,16 +149,29 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         final float tm = ui.hud.msgTop / getResources().getDisplayMetrics().density;
         view.queueEvent(() -> { p.setCar(car); p.setSys(sys); if (tm > 0) p.setTagMax(tm); });
         stage.setPage(page);
+        lgHost = new com.x3card.car3d.lg.LgHost(view, getResources().getDisplayMetrics().density);
+        stage.setLg(lgHost);
+        ui.hud.setLgHost(lgHost);
         // 同级页面：Hud 的 pageOffset 变化时，只把车模本身往左滑出/滑回（车况背景 Bg 保持满屏固定），
         // 这样音乐背景半透明淡入时下方始终是车况背景、不会露出黑底亮暗缝；GL 停画按 pageOffset 实时决定——
         // 只有完全停在音乐页（且非拖拽）才停，拖拽/滑动途中保持渲染，车模跟着平移进出
         ui.hud.setOnPageOffset(() -> {
             float ph = ui.hud.pagePhase();
+            int idx = ui.hud.pageIndex();
+            pageIdx = idx;
             p.setPageOffset(ph);
-            boolean onMusic = Math.abs(ph - 1f) < 0.012f && !ui.hud.dragging(); // 完全停在音乐页(phase≈1)才停 GL；阈值与车模可见边界(0.985)对齐，循环切页时车模刚露头 GL 已恢复渲染
-            view.queueEvent(() -> stage.setVisible(started && !slept && !onMusic));
-            view.queueEvent(() -> stage.invalidate()); // 滑动途中让 GL 继续出帧，车模跟着平滑滑出/滑回
-            ui.setPagePhase(ph); // 胎压标签随相位淡出：滑到音乐页不残留标签（与 Hud 车况 UI 同步）
+            boolean onMusic = idx == 1 && Math.abs(ph - 1f) < 0.012f && !ui.hud.dragging(); // 完全停在音乐页才停 GL
+            boolean onLg = idx == 2; // 第三页：GL 帧交给琉光 3D 场景
+            if (lgHost != null) {
+                float d = getResources().getDisplayMetrics().density;
+                lgHost.size(view.getWidth() / d, view.getHeight() / d);
+            }
+            view.queueEvent(() -> {
+                stage.setLgMode(onLg);
+                stage.setVisible(started && !slept && !onMusic);
+                stage.invalidate();
+            });
+            ui.setPagePhase(idx == 0 ? ph : 1f); // 非车况页藏掉胎压标签
         });
         acOk();
     }
@@ -221,7 +235,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     /** GL 该不该画：看得见、没睡、不在音乐页。
      *  音乐页时整个 GL 停画（车模和车况背景都在 Stage 里，setVisible 掐的是渲染帧入口，两者一起停），
      *  两个页面互不干扰：车况背景再也影响不到音乐页，音乐背景也不压在车模上。 */
-    private boolean glWanted() { return started && !slept && !musicPageOn; }
+    private boolean glWanted() { return started && !slept && pageIdx != 1; } // 音乐页停 GL；车况页与琉光页都要画
     /** 看得见 / 看不见：画布停画、车况退订（同网页版：页面藏起来取消订阅，回来重订） */
     private void wake(boolean on) {
         if (on) {
@@ -632,7 +646,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override public void musicCard(boolean on, int dir) {
         final CarPage p = page;
         p.setCardMusic(on, dir);
-        musicPageOn = on;
+        pageIdx = on ? 1 : 0;
         // GL 停画交给 Hud.onPageOffset 按 pageOffset 实时决定（拖拽/滑动途中保持渲染，停在音乐页才停），
         // 不再用「进音乐页 300ms 后停画」的延时器——否则拖拽回车模页时会被它把 GL 又关掉、车模拖回途中空白
         boolean vis = started && !slept;

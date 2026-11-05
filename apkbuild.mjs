@@ -78,9 +78,10 @@ export async function build({ SRC, OUT, APK_DIR, KS, ASSETS, prepare, noCompress
   const java = files(path.join(SRC, 'src'), '.java').concat(files(path.join(OUT, 'gen'), '.java'));
   const javacArgs = ['-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', JAR + path.delimiter + path.join(BT, 'core-lambda-stubs.jar'), '-Xlint:-options', '-d', path.join(OUT, 'classes')];
   run(bin('javac'), javacArgs.concat(java));
-  // 3. class → dex
+  // 3. class → dex（class 变多后，逐个绝对路径会撑爆 Windows 命令行长度，改用相对路径 + cwd）
+  const classesDir = path.join(OUT, 'classes');
   run(bin('java'), ['-cp', path.join(BT, 'lib', 'd8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '28', '--lib', JAR, '--output', path.join(OUT, 'dex')]
-    .concat(files(path.join(OUT, 'classes'), '.class')));
+    .concat(files(classesDir, '.class').map(f => path.relative(classesDir, f))), { cwd: classesDir });
   // 4. dex 放进 APK（aapt add 按相对路径放，所以在 dex 目录里执行）
   for (const dx of files(path.join(OUT, 'dex'), '.dex')) run(bt('aapt'), ['add', path.join('..', 'base.apk'), path.basename(dx)], { cwd: path.join(OUT, 'dex') });
   // 5. 对齐、签名

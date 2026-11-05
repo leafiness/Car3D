@@ -22,6 +22,7 @@ import com.ljone.car3d.gl.Obj3D;
 import com.ljone.car3d.gl.Programs;
 import com.ljone.car3d.gl.Renderer;
 import com.ljone.car3d.gl.Tex;
+import com.x3card.car3d.lg.LgHost;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -68,6 +69,8 @@ public final class Stage implements GLSurfaceView.Renderer {
     private SceneView view;
     public Renderer renderer;
     private Page page, pending;
+    private LgHost lg;        // 第三页：琉光 3D 场景
+    private boolean lgMode;   // 停在琉光页时，整帧 GL 委托给 lg
     private boolean ready, visible = true, started;
     private float W = 1, H = 1;
     private long lastT, lastDraw;
@@ -128,11 +131,13 @@ public final class Stage implements GLSurfaceView.Renderer {
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) {
         bw = w; bh = h;
         renderer.setSize(w, h);
+        if (lg != null) lg.surfaceChanged(w, h);
         if (page != null && ready) page.resize(W, H, W < H); // 像素比变了（换画质）：按画布像素建的缓冲跟着变
         invalidate();
     }
     @Override public void onDrawFrame(GL10 gl) {
         raf = false;
+        if (lgMode && lg != null) { lg.draw(gl, bw, bh); return; } // 第三页：琉光 3D 场景
         if (page == null || !ready) { GLES30.glClearColor(0, 0, 0, 0); GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT); return; }
         frame(SystemClock.uptimeMillis());
     }
@@ -362,6 +367,15 @@ public final class Stage implements GLSurfaceView.Renderer {
     void resize(float w, float h) {
         W = w; H = h;
         if (page != null && ready) page.resize(W, H, W < H);
+        invalidate();
+    }
+    /** 注入琉光场景适配器（MainActivity 建好 GLSurfaceView 后调一次） */
+    void setLg(LgHost h) { lg = h; }
+    /** 进 / 出第三页：切走时清 GL 状态缓存，避免与车况页的 VAO/FBO/program 串味 */
+    void setLgMode(boolean on) {
+        if (on == lgMode) return;
+        if (lg != null) lg.leave();
+        lgMode = on;
         invalidate();
     }
     void setVisible(boolean v) {

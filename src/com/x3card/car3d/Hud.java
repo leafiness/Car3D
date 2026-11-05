@@ -35,7 +35,7 @@ import android.os.Looper;
  */
 @SuppressLint("ViewConstructor")
 final class Hud extends View {
-    interface Tap { void status(); void pick(int i); void all(); void close(); void debug(); void card(boolean fromRight); void pageTo(boolean on); void music(String a); void launchApp(); }
+    interface Tap { void status(); void pick(int i); void all(); void close(); void debug(); void card(boolean fromRight); void pageTo(int idx); void music(String a); void launchApp(); }
 
     // 浅色 / 深色（同 CSS 变量）：ink、mute、line、chip、ok、warn、bad、info
     private static final int[] LIGHT = { 0xff14171c, 0x8014171c, 0x1f14171c, 0xb3ffffff, 0xff0e9f57, 0xffd97706, 0xffdc2f2f, 0xff2575e6 };
@@ -222,6 +222,7 @@ final class Hud extends View {
 
     // ================= 画 =================
     @Override protected void onDraw(Canvas c) {
+        if (pageIdx == 2) pushLg(); // 第三页：把当前媒体快照推给琉光 3D 场景
         // 顶栏、车况图标、车速、下面那行字在两个页面都照常显示，浮在音乐整页背景之上
         // 底部车况数据固定不动；其余元素整体随 topShift 上移（drawStats 在平移之外单独绘制）
         float ph = phase; // 折回 [0,2) 的循环相位：0/2=车模页、1=音乐页（越过边界即循环到另一页）
@@ -646,18 +647,38 @@ final class Hud extends View {
     }
 
     // ================= 音乐卡片 =================
-    void setMusic(boolean on, boolean fromRight) { // 同级页面切换（支持左右循环）：on=音乐页、off=车模页；fromRight 仅旧签名残留
-        // 已在该页且 phase 已到位才跳过；否则（尤其拖拽中途松手落点=当前页）必须继续回弹动画，否则会卡在中间
-        if (on == musicOn && Math.abs(phase - (on ? 1f : 0f)) < 0.001f) return;
-        musicOn = on; // 立即同步目标页状态：触摸命中分支（if(musicOn)）依赖它，避免动画开始前那一帧仍是旧值（旧版即如此，可靠）
-        if (!on) { coverR.setEmpty(); cardR.setEmpty(); } // 离开音乐页：封面 / 卡片可点区作废，别在车况页误触发
-        animPage(nearestPage(page, on ? 1 : 0)); // 折回最近的对应页（循环）：Hud 音乐层右进/左出、GL 车模交叉滑动（onPageOffset 驱动）
+    void setMusic(boolean on, boolean fromRight) { setPageIndex(on ? 1 : 0); }
+    /** 三页切换：0=车况、1=音乐、2=琉光 */
+    void setPageIndex(int idx) {
+        if (idx < 0 || idx > 2) return;
+        if (idx == pageIdx && Math.abs(phase - idx) < 0.001f) return;
+        pageIdx = idx;
+        musicOn = (idx == 1); // 立即同步目标页状态：触摸命中分支依赖它
+        if (idx != 1) { coverR.setEmpty(); cardR.setEmpty(); } // 离开音乐页：可点区作废
+        animPage(nearestPage(page, idx));
         invalidate();
     }
-    // 同级页面：连续页索引 page（不封顶，循环）；偶数=车模页、奇数=音乐页。
-    // 渲染用相位 phase=wrapPhase(page)∈[0,2)：0/2=车模页、1=音乐页；音乐层偏移 cardOffPx=(1-phase)*W、GL 车模按 carPhase 折回[-1,1]交叉滑动。
+    int pageIndex() { return pageIdx; }
+    void setLgHost(com.x3card.car3d.lg.LgHost h) { lgHost = h; }
+    /** 把 car3d 已有的媒体快照桥接给琉光场景（不另开宿主会话） */
+    private void pushLg() {
+        if (lgHost == null) return;
+        List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics;
+        String[] lines = all.toArray(new String[0]);
+        long[] times = null;
+        if (!lyrics.isEmpty() && lyrTimes.size() == lyrics.size()) {
+            times = new long[lyrTimes.size()];
+            for (int i = 0; i < times.length; i++) times[i] = lyrTimes.get(i);
+        }
+        lgHost.media(mHadMedia, playing, mTitle, mArtist, mTrackId, lines, times, lyrIdx, mDur, livePos(), coverBm);
+    }
+    // 同级页面：连续页索引 page（不封顶，循环）；page mod 3：0=车况页、1=音乐页、2=琉光页。
+    // 渲染用相位 phase=wrapPhase(page)∈[0,3)；音乐层偏移 cardOffPx=(1-phase)*W，ph=0 在右、1 就位、2 在左；
+    // 淡入 k=1-|ph-1| 天然让 ph=2 时音乐层完全淡出，第三页交给 Stage 委托的琉光 3D 场景。
     private float page = 0;
-    private float phase = 0;       // 派生：每帧由 page 折算到 [0,2)
+    private int pageIdx = 0;       // 当前页序号 0/1/2
+    private com.x3card.car3d.lg.LgHost lgHost; // 第三页的媒体数据出口
+    private float phase = 0;       // 派生：每帧由 page 折算到 [0,3)
     private float carPhase;        // 派生：= phase 折回 [-1,1]，0=车模页居中、±1=音乐页
     private float cardOffPx; // 派生：onDraw 里按 phase 算
     private ValueAnimator offAnim;
@@ -666,20 +687,21 @@ final class Hud extends View {
     float pagePhase() { return phase; }       // 给 MainActivity 决定 GL 停画（phase≈1 停在音乐页）
     float pageOffset() { return phase; }      // 兼容旧调用（语义同 pagePhase）
     boolean dragging() { return dragging; }
-    private static float wrapPhase(float p) { p = p % 2; if (p < 0) p += 2; return p; }
+    private static float wrapPhase(float p) { p = p % 3; if (p < 0) p += 3; return p; }
     private void syncPhase() {
         phase = wrapPhase(page);
-        carPhase = (phase <= 1f) ? phase : phase - 2f;
-        musicOn = Math.abs(carPhase) > 0.5f;  // 离音乐页(±1)更近即为音乐页
+        carPhase = (phase <= 1.5f) ? phase : phase - 3f;
+        pageIdx = ((Math.round(phase) % 3) + 3) % 3;
+        musicOn = (pageIdx == 1);
     }
     /** 取离 p 最近的、奇偶性为 parity(0=偶数车模页 / 1=奇数音乐页) 的整数页。
      *  注意：best 只能从满足奇偶性的候选里选，绝不允许返回与 parity 相反的点（旧实现以 Math.round(p) 起步，
      *  当 p 正好落在某整数上时 best 会卡在错误的奇偶性，导致「车模页↔音乐页」归位失效、页面卡在半途）。 */
-    private static float nearestPage(float p, int parity) {
+    private static float nearestPage(float p, int idx) {
         int base = Math.round(p);
         float best = Float.NaN, bd = Float.POSITIVE_INFINITY;
-        for (int c : new int[]{ base - 2, base - 1, base, base + 1, base + 2 }) {
-            if ((c & 1) != parity) continue;          // 只接受目标奇偶性的页
+        for (int c = base - 3; c <= base + 3; c++) {
+            if (((c % 3) + 3) % 3 != idx) continue;   // 只接受目标页序号（三页循环）
             float d = Math.abs(c - p);
             if (Float.isNaN(best) || d < bd - 1e-6 || (Math.abs(d - bd) <= 1e-6 && Math.abs(c) < Math.abs(best))) { best = c; bd = d; }
         }
@@ -1599,7 +1621,7 @@ final class Hud extends View {
                     if (dragVel < -0.5f) t = Math.round(page) + 1;     // 快速左甩 → 去下一页（循环）
                     else if (dragVel > 0.5f) t = Math.round(page) - 1; // 快速右甩 → 回上一页（循环）
                     else t = Math.round(page);                         // 否则落最近页
-                    tap.pageTo((t & 1) == 1); // 奇数=音乐页、偶数=车模页：切到目标页（状态 + 回弹动画一起交给它）
+                    tap.pageTo(((t % 3) + 3) % 3); // 三页循环：0 车况 / 1 音乐 / 2 琉光
                 }
             } else if (d == 10) tap.music("previous");
             else if (d == 11) tap.music("togglePlayPause");

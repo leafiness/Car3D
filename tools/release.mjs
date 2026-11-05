@@ -1,5 +1,6 @@
 // 发版脚本：node tools/release.mjs [--preview] [--test]
 //   --preview  只打印将要发布的版本与更新日志（不发版），发版前给用户确认用
+//   --changelog-only  只按 CHANGELOG.md 重新同步 changelog.txt（不构建 APK、不动部署目录）
 //   --test     发到测试通道（version_test.txt / latest_test.apk / changelog_test.txt）：
 //              构建时把 Settings.testBuild 默认翻成 true（测试版 APK 装完才走测试通道），
 //              且不碰正式通道文件（version.txt / latest.apk / changelog.txt），正式用户不受影响。
@@ -21,8 +22,8 @@ import { execFileSync } from 'node:child_process';
 const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEPLOY_DIR = 'D:/Program Files/WorkBuddyCache/UIPlus-Web卡片/output/UiPlus-3DCar-APK/car3d';
 const PREVIEW = process.argv.includes('--preview');
-/** changelog.txt 里保留最近几个版本 */
-const KEEP_VERSIONS = 6;
+/** changelog.txt 保留全部历史版本：下载页「历史更新日志」要能查到每一个版本，不再只留最近几个 */
+const KEEP_VERSIONS = 999;
 
 const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
 const write = (p, s) => fs.writeFileSync(path.join(HERE, p), s, 'utf8');
@@ -71,12 +72,21 @@ if (PREVIEW) {
   console.log('════ 本次将发布 ════');
   console.log(`版本：v${VER}（versionCode ${CODE}）`);
   console.log('────────────────────────────────');
-  console.log(changelogText.trim());
+  const pv = changelogText.trim().split(/\n\s*\n/);
+  console.log(pv.slice(0, 2).join('\n\n'));
+  if (pv.length > 2) console.log(`\n… 另有 ${pv.length - 2} 个历史版本，完整内容见 changelog.txt`);
   console.log('────────────────────────────────');
-  console.log(`将同步：changelog.txt（保留最近 ${KEEP_VERSIONS} 个版本）`);
+  console.log(`将同步：changelog.txt（保留全部 ${blocks.length} 个版本）`);
   console.log(`将构建：out/3D车况 v${VER}.apk`);
   console.log(`将暂存：${DEPLOY_DIR}`);
   console.log('\n确认无误后运行：node tools/release.mjs');
+  process.exit(0);
+}
+
+// ---------- --changelog-only：只同步日志，不构建 APK、不动部署目录 ----------
+if (process.argv.includes('--changelog-only')) {
+  write('changelog.txt', changelogText);
+  console.log(`✓ changelog.txt 已同步（${Math.min(blocks.length, KEEP_VERSIONS)} 个版本，全量历史）`);
   process.exit(0);
 }
 
