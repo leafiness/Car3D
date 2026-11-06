@@ -170,6 +170,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         });
         stage.setLg(lgHost);
         ui.hud.setLgHost(lgHost);
+        ui.hud.setMediaPoll(() -> data.mediaNow());
         lgUi = lgHost.uiView();
         lgUi.setVisibility(android.view.View.GONE);
         ui.addView(lgUi, new FrameLayout.LayoutParams(-1, -1));
@@ -193,7 +194,17 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
                 lgEntered = onLg;
                 if (lgUi != null) lgUi.setVisibility(onLg ? android.view.View.VISIBLE : android.view.View.GONE);
                 ui.setLgMode(onLg);
-                if (lgHost != null) { if (onLg) lgHost.enter(); else lgHost.leavePage(); }
+                // ★第三页也要媒体订阅：切页时 musicCard(false) 会把媒体退订（退订后歌名、进度、播放态就永远
+                //   停在离开音乐页那一刻：歌词定格在第一句、播放键按了也不回状态）。第三页是媒体页，必须留着。
+                boolean vis2 = started && !slept;
+                data.use(vis2, vis2 && (onLg || p.wantsMedia()));
+                if (lgHost != null) {
+                    if (onLg) {
+                        lgHost.enter();
+                        data.mediaNow();                        // 进页先问一次真值：订阅推送可能早就停了
+                        if (!ui.hud.hasLyrics()) musicLyrics();  // 没整首歌词就补拉一次（直达第三页时音乐页那步没走）
+                    } else lgHost.leavePage();
+                }
             }
             view.queueEvent(() -> {
                 stage.setLgMode(onLg);
@@ -300,7 +311,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     private void wants() { wants(started && !slept); }
     private void wants(boolean on) {
         final CarPage p = page;
-        data.use(on, on && p.wantsMedia());
+        // 第三页（琉光）也是媒体页：它不显示车况，但歌名、进度、播放态全靠媒体订阅
+        data.use(on, on && (p.wantsMedia() || ui.hud.pageIndex() == 2));
     }
     /** 全屏页开着：小窗口里停画；关了接着画，顺便读一下全屏页里改过的设置 */
     void sleep(boolean s) {
@@ -703,7 +715,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         // GL 停画交给 Hud.onPageOffset 按 pageOffset 实时决定（拖拽/滑动途中保持渲染，停在音乐页才停），
         // 不再用「进音乐页 300ms 后停画」的延时器——否则拖拽回车模页时会被它把 GL 又关掉、车模拖回途中空白
         boolean vis = started && !slept;
-        data.use(vis, vis && p.wantsMedia());
+        // 去第三页（琉光）时 on=false，但第三页还在放歌：别把媒体退订掉
+        data.use(vis, vis && (p.wantsMedia() || ui.hud.pageIndex() == 2));
     }
     /** 播放控制命令（play/pause/next/previous/togglePlayPause） */
     @Override public void music(String action) { data.mediaCmd(action); }

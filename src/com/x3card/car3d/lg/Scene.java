@@ -114,20 +114,31 @@ final class Scene implements GLSurfaceView.Renderer {
     private int[] lyricState() {
         if (pend != null) return pend.st; // 换了歌、封面还没认准：滚轮上还是上一首，停在原来那句
         if (MS.lines.length == 0) return lastSt = new int[] { 0, 1 };
-        int cur = MS.cur;
-        if (cur < 0) cur = curByPos(); // 宿主没给当前句：按每句时间和播放位置自己算（同琉光的定位兜底）
+        // ★位置是唯一真相：有每句时间就按播放位置算当前句（同琉光 MediaState.anchor）。
+        //   只信快照里的 cur 时，宿主一旦停止逐句推送，整首就定格在第一句不动。
+        int cur = curByPos();
+        if (cur < 0) cur = MS.cur;
         return lastSt = new int[] { (int) clamp(cur, 0, lines.length - 1), cur >= 0 ? 1 : 0 };
     }
 
-    /** 按播放位置找「唱到第几句」：只在快照没带当前句时兜底用 */
+    /** 按播放位置找「唱到第几句」：整首歌词带每句时间（且单调）才可信，否则返回 -1 */
     private int curByPos() {
         long[] t = MS.times;
-        if (t == null || t.length == 0) return -1;
+        int n = lines.length;
+        if (t == null || n == 0 || t.length < n) return -1;
         long p = MS.pos();
         if (p <= 0) return -1;
-        int c = 0;
-        for (int i = 0; i < t.length && i < lines.length; i++) if (t[i] >= 0 && t[i] <= p) c = i;
-        return c;
+        int c = -1;
+        long prev = Long.MIN_VALUE;
+        for (int i = 0; i < n; i++) {
+            long at = t[i];
+            if (at < 0) continue;
+            if (at < prev) return -1; // 时间轴不单调：不可信
+            prev = at;
+            if (at <= p) c = i;
+        }
+        if (prev <= 0) return -1;
+        return Math.max(0, c);
     }
 
     /** 第三页左上角那行自检字用的（主线程读，只读几个不会崩的标量） */

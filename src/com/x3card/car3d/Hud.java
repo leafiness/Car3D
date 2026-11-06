@@ -27,6 +27,7 @@ import org.json.JSONObject;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 /**
  * 车况页上的字和图标（照 style.css 的 .pg-car 那部分画在一块画布上）：顶栏（挡位、车速、系统图标、电源）、车况图标两列（竖屏一排）、
@@ -675,6 +676,8 @@ final class Hud extends View {
         invalidate();
     }
     int pageIndex() { return pageIdx; }
+    /** 有没有整首歌词（进第三页时用来决定要不要补拉一次） */
+    boolean hasLyrics() { return !lyrics.isEmpty(); }
     void setLgHost(com.x3card.car3d.lg.LgHost h) {
         lgHost = h;
         removeCallbacks(lgPump);
@@ -682,25 +685,35 @@ final class Hud extends View {
     }
     // 第三页的媒体快照泵：onDraw 走不到（或只在数据变化时才走到）时也能把快照推过去。
     // LgHost 那边有 400ms 节流 + 内容判重，多推几次不会重画歌词
+    private Runnable mediaPoll;               // 主动问一次媒体（订阅推送不可靠时的兜底）
+    private long lastMediaAt = SystemClock.elapsedRealtime();
+    void setMediaPoll(Runnable r) { mediaPoll = r; }
     private final Runnable lgPump = new Runnable() {
         @Override public void run() {
-            if (lgHost != null && pageIdx == 2) pushLg();
+            if (lgHost != null && pageIdx == 2) {
+                pushLg();
+                // 订阅推送停了也照样有数据：两秒半没收到快照就主动问一次（否则歌名、进度、播放态会永远停在那一份）
+                if (mediaPoll != null && SystemClock.elapsedRealtime() - lastMediaAt > 2500) { lastMediaAt = SystemClock.elapsedRealtime(); mediaPoll.run(); }
+            }
             postDelayed(this, pageIdx == 2 ? 200 : 900);
         }
     };
     // ================= 第三页自检字（定位「摸不到 / 命中不了 / 命令没发」；确认完就关掉） =================
     private static final boolean LG_DBG = true;
-    private int drawN;
+    private int drawN, pushN, mediaN;
     private void drawLgDbg(Canvas c) {
         String s = "d" + drawN + " " + lgHost.diag();
+        // 第二行：推=推给琉光的次数、媒=收到媒体快照的次数、位=播放位置(秒)、时=每句时间条数、h=当前句
+        String s2 = "推" + pushN + " 媒" + mediaN + " 位" + (livePos() / 1000) + " 时" + lyrTimes.size() + " h" + lyrIdx + " L" + lyrics.size();
         p.setTypeface(Typeface.DEFAULT);
-        p.setTextSize(r(0.19f));
+        p.setTextSize(r(0.17f));
         p.setTextAlign(Paint.Align.LEFT);
-        float w = p.measureText(s) + r(0.18f), h = r(0.32f), x0 = r(0.14f), y0 = r(0.12f);
+        float w = Math.max(p.measureText(s), p.measureText(s2)) + r(0.18f), h = r(0.56f), x0 = r(0.14f), y0 = r(0.12f);
         p.setColor(0x99000000);
         c.drawRoundRect(x0, y0, x0 + w, y0 + h, r(0.07f), r(0.07f), p);
         p.setColor(0xffffffff);
-        c.drawText(s, x0 + r(0.09f), y0 + h * 0.72f, p);
+        c.drawText(s, x0 + r(0.09f), y0 + h * 0.42f, p);
+        c.drawText(s2, x0 + r(0.09f), y0 + h * 0.84f, p);
     }
     /** 把 car3d 已有的媒体快照桥接给琉光场景（不另开宿主会话） */
     // 推给琉光的歌词数组（Hud 每帧都推一份：没变就沿用同一个数组，不然 LgHost 每次都要逐行比一遍）
@@ -710,6 +723,7 @@ final class Hud extends View {
     private int lgN = -1;
     private void pushLg() {
         if (lgHost == null) return;
+        pushN++;
         List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics;
         if (all != lgSrc || all.size() != lgN) {
             lgSrc = all;
@@ -721,7 +735,11 @@ final class Hud extends View {
                 for (int i = 0; i < lgTimes.length; i++) lgTimes[i] = lyrTimes.get(i);
             }
         }
-        int cur = lyrIdx < 0 && !lyrics.isEmpty() ? idxByPos() : lyrIdx; // 索引还没定下来时按播放位置兜一次
+        // ★当前句以「播放位置」为准：有整首歌词带每句时间时，位置是唯一真相（同琉光 MediaState.anchor）。
+        //   只靠宿主的逐句推送到不了就整首定格在第一句——车机换句推送一旦停了，歌词就永远不滚。
+        int byPos = curByPos();
+        if (byPos >= 0) lyrIdx = byPos; // 音乐页那套也用这个索引，一起跟着位置走
+        int cur = byPos >= 0 ? byPos : (lyrIdx >= 0 ? lyrIdx : 0);
         lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, lgLines, lgTimes, cur, mDur, livePos(), coverBm);
     }
     // 同级页面：连续页索引 page（不封顶，循环）；page mod 3：0=车况页、1=音乐页、2=琉光页。
@@ -797,6 +815,7 @@ final class Hud extends View {
             playing = false; mTrackId = ""; mPosReported = -1; lyrStale = ""; invalidate(); return;
         }
         mHadMedia = true;
+        if (m != null) { mediaN++; lastMediaAt = SystemClock.elapsedRealtime(); }
         String prevLyric = mLyric; // 换歌前那句（下面 trackChanged 时记为「上一首残留的那句」）
         mTitle = m.optString("title", ""); mArtist = m.optString("artist", "");
         mLyric = lyricText(m.optString("lyric", "")); mCover = m.optString("coverUrl", "");
@@ -847,6 +866,8 @@ final class Hud extends View {
             else chainRepeat();                            // 推来的还是同一句：可能是连着两句一模一样，按时间自己往下走
         }
         playing = newPlaying;
+        int bp = curByPos();
+        if (bp >= 0 && bp != lyrIdx) lyrIdx = bp; // 有每句时间：当前句跟播放位置走（宿主换句推送一停，只靠推送到不了就定格在第一句）
         invalidate();
     }
     /** 当前曲目的 trackId（拉整首歌词时做迟到校验用） */
@@ -943,15 +964,29 @@ final class Hud extends View {
     private void stopAdvance() { if (lyrAdvance != null) { clockH.removeCallbacks(lyrAdvance); lyrAdvance = null; } }
     /** 兜底：宿主还没给当前句 / 这句不在整首里时，按播放位置找「唱到第几句了」 */
     private int idxByPos() {
+        int i = curByPos();
+        return i < 0 ? 0 : i;
+    }
+    /**
+     * 按播放位置算当前句：整首歌词带每句时间（且时间单调）才可信，否则返回 -1。
+     * 时间是「每句在整首里的开始时间」，位置过了哪一句就是哪一句——同琉光里 anchor + 滚轮定位的做法。
+     */
+    private int curByPos() {
+        int n = lyrics.size();
+        if (n == 0 || lyrTimes.size() != n) return -1;
         long p = livePos();
-        if (p <= 0 || lyrics.isEmpty()) return 0;
-        int k = 0;
-        for (int i = 0; i < lyrics.size() && i < lyrTimes.size(); i++) {
+        if (p <= 0) return -1;
+        int k = -1;
+        long prev = Long.MIN_VALUE;
+        for (int i = 0; i < n; i++) {
             long at = lyrTimes.get(i);
-            if (at < 0) continue;
-            if (at <= p) k = i; else break;
+            if (at < 0) continue;      // 这句没给时间：跳过，但不否决整条时间轴
+            if (at < prev) return -1;  // 时间轴不单调：不可信，交回宿主推送的索引
+            prev = at;
+            if (at <= p) k = i;
         }
-        return k;
+        if (prev <= 0) return -1;      // 一句有效时间都没有
+        return Math.max(0, k);
     }
     private long livePos() { if (!posSet) return 0; if (playing && mDur > 0) return Math.min(mPos + (System.currentTimeMillis() - mRecv), mDur); return mPos; }
     private static String fmtTime(long ms) {

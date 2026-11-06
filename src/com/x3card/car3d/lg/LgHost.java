@@ -168,10 +168,14 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     }
 
     // ---------- Scene.Host（GL 线程调：交回主线程） ----------
+    /** 按下播放/暂停后，车机回推状态常常慢半拍甚至不回：先本地把播放态翻过来，按钮立即可见（2 秒内以真值为准） */
+    private volatile boolean pFlip;
+    private volatile long pFlipAt;
     @Override public void press(String cmd) {
         if (act == null) return;
         if ("heart".equals(cmd)) return; // 收藏是车机媒体控制器的，car3d 这边不给：红心不出现
         final String m = "toggle".equals(cmd) ? "togglePlayPause" : cmd;
+        if ("toggle".equals(cmd)) { pFlip = !lPlaying0; pFlipAt = SystemClock.elapsedRealtime(); }
         pressN.incrementAndGet();
         lastCmd = cmd;
         main.post(() -> act.media(m));
@@ -235,6 +239,12 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
                       String[] lines, long[] times, int cur, long dur, long pos, Bitmap cover) {
         String tr = track == null ? "" : track, ti = title == null ? "" : title, ar = artist == null ? "" : artist;
         String[] ls = lines == null ? NO_LINES : lines;
+        // 刚按过播放/暂停：车机还没回推就把本地翻过来的状态顶上去（真值一到立刻以真值为准）
+        if (pFlipAt > 0) {
+            if (playing == pFlip) pFlipAt = 0;                             // 车机跟上了：撤掉乐观值
+            else if (SystemClock.elapsedRealtime() - pFlipAt < 2000) playing = pFlip; // 还没跟上：先按本地值画
+            else pFlipAt = 0;                                              // 太久没跟上：以后台为准，别一直骗人
+        }
         // ★换歌只认曲目号（没有曲目号时才认歌名+歌手）。原版这个判定在 MediaState 内部由它自己维护；
         //   桥接层要是把时长也算进去，车机把 duration 微调一次就被当成换了歌 —— 场景会反复「等新封面」，
         //   歌词停在原处不动、封面反复翻面。这是「歌词不滚动」的一个真正来源。

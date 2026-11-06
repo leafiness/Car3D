@@ -229,6 +229,8 @@ final class CarData {
     }
     /** 发一个媒体控制命令（play/pause/next/previous/togglePlayPause） */
     void mediaCmd(String action) { try { host.request("media." + action, new JSONObject(), null); } catch (Exception ignored) { } }
+    /** 主动问一次媒体快照（订阅推送不可靠时的兜底：推送一停，界面上的歌名、进度、播放态都不再更新） */
+    void mediaNow() { try { host.request("media.get", null, (m, c, msg) -> { if (m != null) onMedia(m); }); } catch (Exception ignored) { } }
     /** 拉整首歌词（行列表）；拿不到返回空列表。歌词可能迟到：结果带的 trackId 对不上当前曲目就不采用，空/过期结果间隔重试几次 */
     /** 一行歌词：文本 + 这句在整首里的开始时间（timeMs，宿主没给是 -1）。
      *  照琉光 MediaState：有了每句时间才能「下一句和这句一模一样时按时间自己往下走」、以及按播放位置兜底定位。 */
