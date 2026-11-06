@@ -175,15 +175,8 @@ if (TEST) {
   fs.copyFileSync(apk, path.join(DEPLOY_DIR, 'latest.apk'));
   fs.writeFileSync(path.join(DEPLOY_DIR, 'version.txt'), `${VER}\n${CODE}\n`, 'utf8');
   fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(DEPLOY_DIR, 'changelog.txt'));
-  // 测试通道也指向这个正式包：装上一轮测试版、又开着「测试版更新」的车机看的是 version_test.txt，
-  // 不一起指过来它就会一直停在旧测试版上，永远等不到这次正式版
-  const TEST_DIR = path.join(DEPLOY_DIR, 'test');
-  fs.mkdirSync(TEST_DIR, { recursive: true });
-  for (const d of [DEPLOY_DIR, TEST_DIR]) {
-    fs.copyFileSync(apk, path.join(d, 'latest_test.apk'));
-    fs.writeFileSync(path.join(d, 'version_test.txt'), `${VER} 测试版\n${CODE}\n`, 'utf8');
-    fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(d, 'changelog_test.txt'));
-  }
+  // ★正式发版只动正式通道：测试通道（version_test.txt / latest_test.apk / changelog_test.txt）保持
+  //   上一轮测试版不动。装测试版的车机把「测试版更新」关掉就走正式通道，正常收到正式版更新。
   // 清掉旧版本包，只留这次的（latest.apk 除外）
   for (const f of fs.readdirSync(DEPLOY_DIR)) {
     if (/^3D车况 v.*\.apk$/.test(f) && f !== `3D车况 v${VER}.apk`) fs.unlinkSync(path.join(DEPLOY_DIR, f));
