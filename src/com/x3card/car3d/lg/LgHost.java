@@ -43,14 +43,19 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
 
     // 上一份快照（只在真的变了才递增 rev，Scene 按 rev 判断换歌 / 换歌词，每帧都变会导致歌词反复重建）
     private String lTrack = "", lTitle = "", lArtist = "";
-    private String[] lLines;
+    private String[] lLines;          // 交给场景的那个数组（内容没变就沿用同一个引用：Snap.same 按引用比）
     private long[] lTimes;
     private int lCur = -2;
     private long lDur = -1;
     private Bitmap lCover;
-    private int lastRev = -1;         // 上次交给场景时的 rev
+    // ★这四个版本号必须一路递增、每份快照都带上：Scene 只拿它跟上次比来判断「换歌 / 换歌词 / 换封面 / 换句」。
+    //   曾经它们只在变化的那一次赋值、其余时候留默认 0，于是每一帧都被当成「换了歌词」，每帧重建整套歌词贴图
+    //   （画面卡、歌词不滚，GL 线程被拖慢后点击还会超时→播控点不动）。
+    private int rTrack, rLines, rCover, rCur;
     private boolean lOn0, lPlaying0;  // 上次交给场景的播放态
     private long lastPushAt;
+    private static final String[] NO_LINES = new String[0];
+    private static final long[] NO_TIMES = new long[0];
 
     public LgHost(GLSurfaceView v, Context c, float density, Act a) {
         glView = v;
@@ -111,10 +116,17 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         syncCss();
         if (!booted) { booted = true; scene.boot(true); }
         else scene.setOpts(st);
+        scene.keepAlive(true); // 停在这一页：极光这些一直在动的效果要接着跑
         scene.wake();
     }
-    /** 离开第三页：设置面板收起来 */
-    public void leavePage() { if (ui != null) ui.closeAll(); }
+    /** 离开第三页：设置面板收起来，别再持续出帧（GL 画布要还给车况页按需画） */
+    public void leavePage() {
+        scene.keepAlive(false);
+        if (ui != null) ui.closeAll();
+        // 手势可能在切页途中断掉（UP 没送到）：给场景补一个取消，别让它一直以为手指还按着，否则下次进页点播控会没反应
+        final long t = SystemClock.uptimeMillis();
+        glView.queueEvent(() -> scene.touch(3, 0, 0, t));
+    }
 
     // ---------- Ui.Actions ----------
     @Override public void set(String k, Object v) {
@@ -204,39 +216,48 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     }
 
     // ---------- 媒体数据桥接 ----------
-    public void media(boolean on, boolean playing, String title, String artist, String track,
+    public void media(boolean on, boolean playing, boolean full, String title, String artist, String track,
                       String[] lines, long[] times, int cur, long dur, long pos, Bitmap cover) {
+        String tr = track == null ? "" : track, ti = title == null ? "" : title, ar = artist == null ? "" : artist;
+        String[] ls = lines == null ? NO_LINES : lines;
+        // 先看有没有真的变：Hud 每帧都会推一份，没变就不建对象、不叫醒场景
+        boolean chTrack = !tr.equals(lTrack) || !ti.equals(lTitle) || !ar.equals(lArtist) || dur != lDur;
+        boolean chLines = !sameLines(ls, times);
+        boolean chCover = cover != lCover;
+        boolean chCur = cur != lCur;
+        boolean idle = !chTrack && !chLines && !chCover && !chCur && playing == lPlaying0 && on == lOn0;
+        long now = SystemClock.elapsedRealtime();
+        // 什么都没变、也没到半秒：连快照都不建（播放位置由 Scene 自己按墙钟往后推，不用每帧对齐）
+        if (idle && now - lastPushAt < 400) return;
+        if (chTrack) { rTrack = ++rev; lTrack = tr; lTitle = ti; lArtist = ar; lDur = dur; }
+        if (chLines) { rLines = ++rev; lLines = ls; lTimes = times == null ? NO_TIMES : times; }
+        if (chCover) { rCover = ++rev; lCover = cover; }
+        if (chCur) { rCur = ++rev; lCur = cur; }
+        lOn0 = on; lPlaying0 = playing; lastPushAt = now;
+
         MediaState.Snap s = new MediaState.Snap();
         s.on = on;
         s.playing = playing;
-        s.full = lines != null && lines.length > 0;
+        s.full = full; // 有整首歌词才滚整首；只有听到的句子时只显示当前句（同琉光 MediaState.full）
         s.rawPlaying = playing;
         s.canPlay = true;
-        s.track = track == null ? "" : track;
-        s.title = title == null ? "" : title;
-        s.artist = artist == null ? "" : artist;
+        s.track = lTrack;
+        s.title = lTitle;
+        s.artist = lArtist;
         s.trackCmd = "";
-        s.lines = lines == null ? new String[0] : lines;
-        s.times = times;
+        s.lines = lLines == null ? NO_LINES : lLines;
+        s.times = lTimes == null ? NO_TIMES : lTimes;
         s.cur = cur;
         s.dur = dur;
         s.posBase = pos;
-        s.posAt = SystemClock.elapsedRealtime();
+        s.posAt = now;
         s.cover = cover;
         s.coverTrack = s.track;
         s.heart = BydMedia.HIDE;
-        // 只有真的变了才递增：Scene 按 rev 判断换歌、换歌词，每帧都递增会把歌词贴图反复重建
-        if (!s.track.equals(lTrack) || !s.title.equals(lTitle) || !s.artist.equals(lArtist) || dur != lDur) {
-            s.revTrack = ++rev;
-            lTrack = s.track; lTitle = s.title; lArtist = s.artist; lDur = dur;
-        }
-        if (!sameLines(s.lines, s.times)) { s.revLines = ++rev; lLines = s.lines; lTimes = s.times; }
-        if (cover != lCover) { s.revCover = ++rev; lCover = cover; }
-        if (cur != lCur) { s.revCur = ++rev; lCur = cur; }
-        long now = SystemClock.elapsedRealtime();
-        // Hud 每帧都来推一份：没变就少建几个对象（真的变了、或者播放位置差不多每半秒对齐一次才交给场景）
-        if (rev == lastRev && playing == lPlaying0 && on == lOn0 && now - lastPushAt < 400) return;
-        lastRev = rev; lOn0 = on; lPlaying0 = playing; lastPushAt = now;
+        s.revTrack = rTrack;
+        s.revLines = rLines;
+        s.revCover = rCover;
+        s.revCur = rCur;
         scene.setSnap(s);
     }
 

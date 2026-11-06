@@ -1459,7 +1459,7 @@ final class Scene implements GLSurfaceView.Renderer {
             return;
         }
         if (a == 0) {
-            if (introFull() || grab != null || !ready) return;
+            if (introFull() || !ready) { grab = null; return; }
             Grab g = new Grab();
             g.x = ex; g.y = ey; g.t = g.lt = tms; g.lx = ex; g.ly = ey;
             g.seek = seekHit(ex, ey);
@@ -1565,8 +1565,11 @@ final class Scene implements GLSurfaceView.Renderer {
 
     // sceneDirty：外面交进来的（媒体、深浅色、设置、手势……）都要重画场景；雨珠自己的定时器叫醒（rainWake）不用
     private volatile boolean sceneDirty = true;
+    private volatile boolean alive; // 留在页面上就一直出帧（car3d 第三页用：极光、浮尘、水面一直在动）
     private boolean rainOnly;
     void wake() { sceneDirty = true; view.requestRender(); }
+    /** 一直出帧（进第三页开、离开关）：不开的时候按需画，画面不动就停帧 */
+    void keepAlive(boolean on) { if (on == alive) return; alive = on; wake(); }
     private final Runnable rainWake = new Runnable() { @Override public void run() { view.requestRender(); } };
 
     // ================= 玻璃上的雨珠（见 Rain） =================
@@ -1660,7 +1663,9 @@ final class Scene implements GLSurfaceView.Renderer {
         gcCovers();
 
         if (rainToggle) { rainToggle = false; rain.toggle(stRain, clock); }
-        boolean rainMv = rain.tick(dt, clock), busy = MS.playing || moving || grab != null || shelf.touching();
+        // 留在这一页（car3d 的第三页）时一直出帧：极光、浮尘、水面的呼吸都是跟着 clock 一直动的，
+        // 一停帧它们就定在那儿，看起来像动画卡住了（独立 App 里暂停后画面本来也没人看，所以那里按需就够）
+        boolean rainMv = rain.tick(dt, clock), busy = alive || MS.playing || moving || grab != null || shelf.touching();
         rainOnly = rain.on() && !busy; // 只有水珠在动：30 帧就够
         boolean still = rain.on() && !busy && !sceneDirty && rain.valid(); // 只有水珠在动：不重画场景，用拷下来的画面合成
         sceneDirty = false;

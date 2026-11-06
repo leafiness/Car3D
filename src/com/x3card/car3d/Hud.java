@@ -676,16 +676,25 @@ final class Hud extends View {
     int pageIndex() { return pageIdx; }
     void setLgHost(com.x3card.car3d.lg.LgHost h) { lgHost = h; }
     /** 把 car3d 已有的媒体快照桥接给琉光场景（不另开宿主会话） */
+    // 推给琉光的歌词数组（Hud 每帧都推一份：没变就沿用同一个数组，不然 LgHost 每次都要逐行比一遍）
+    private String[] lgLines;
+    private long[] lgTimes;
+    private List<String> lgSrc;
+    private int lgN = -1;
     private void pushLg() {
         if (lgHost == null) return;
         List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics;
-        String[] lines = all.toArray(new String[0]);
-        long[] times = null;
-        if (!lyrics.isEmpty() && lyrTimes.size() == lyrics.size()) {
-            times = new long[lyrTimes.size()];
-            for (int i = 0; i < times.length; i++) times[i] = lyrTimes.get(i);
+        if (all != lgSrc || all.size() != lgN) {
+            lgSrc = all;
+            lgN = all.size();
+            lgLines = all.toArray(new String[0]);
+            lgTimes = null;
+            if (!lyrics.isEmpty() && lyrTimes.size() == lyrics.size()) {
+                lgTimes = new long[lyrTimes.size()];
+                for (int i = 0; i < lgTimes.length; i++) lgTimes[i] = lyrTimes.get(i);
+            }
         }
-        lgHost.media(mHadMedia, playing, mTitle, mArtist, mTrackId, lines, times, lyrIdx, mDur, livePos(), coverBm);
+        lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, lgLines, lgTimes, lyrIdx, mDur, livePos(), coverBm);
     }
     // 同级页面：连续页索引 page（不封顶，循环）；page mod 3：0=车况页、1=音乐页、2=琉光页。
     // 渲染用相位 phase=wrapPhase(page)∈[0,3)；音乐层偏移 cardOffPx=(1-phase)*W，ph=0 在右、1 就位、2 在左；
@@ -1580,7 +1589,15 @@ final class Hud extends View {
     // ================= 手势：只接可点的地方 =================
     private int downOn = -1;
     @Override public boolean onTouchEvent(MotionEvent e) {
-        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：手势交给琉光，只有上/下两条窄边留给切页
+        int am = e.getActionMasked();
+        if (downOn == 30 && (am == MotionEvent.ACTION_UP || am == MotionEvent.ACTION_CANCEL)) {
+            // 琉光那边的手势收尾：不管这一刻相位走到哪，UP 都不能丢——丢了场景会一直以为手指还按着（grab 不清），
+            // 之后再点播控、点封面全都没反应
+            if (lgHost != null) lgHost.touch(am == MotionEvent.ACTION_UP ? 2 : 3, e.getX() / dens, e.getY() / dens, e.getEventTime());
+            downOn = -1;
+            return true;
+        }
+        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：手势交给琉光，只有上边缘 / 左右两边留给切页
         float x = e.getX();
         float y = e.getY() - topShift; // 转入被上移元素的坐标系（底部数据仍用屏幕坐标）
         float yScreen = e.getY();
@@ -1656,15 +1673,15 @@ final class Hud extends View {
     // ================= 第三页（琉光）：手势整个交给琉光，只留窄边用来切页 =================
     /**
      * 琉光页自己不画任何东西，触摸要原样转给 3D 场景（点播放键、点封面、上下翻歌词、左右拖转场景都在那边）。
-     * 切页留三条看不见的热区：上边缘、下边缘、左右两边——都是琉光里没有可点东西的地方，
-     * 在这几处横滑就切回音乐页 / 车况页（跟手 + 甩动落页，和其它两页一样）。
+     * 切页只留三条看不见的热区：上边缘、左右两边——都是琉光里没有可点东西的地方，在这几处横滑就切回音乐页 / 车况页。
+     * ★底部不留热区：琉光的播控条就在底部，留一条会把「点播放键」抢走当成切页手势（表现为播控点不动）。
      */
     private boolean lgTouch(MotionEvent e) {
         float x = e.getX(), y = e.getY();
         int a = e.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             downX = x; downY = y;
-            boolean edge = y < r(0.55f) || y > H - r(0.75f) || x < r(0.6f) || x > W - r(0.6f);
+            boolean edge = y < r(0.4f) || x < r(1.0f) || x > W - r(1.0f);
             downOn = edge ? 20 : 30;
             if (edge) { if (offAnim != null) offAnim.cancel(); }
             else if (lgHost != null) lgHost.touch(0, x / dens, y / dens, e.getEventTime());
