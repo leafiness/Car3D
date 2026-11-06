@@ -251,6 +251,12 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         return false;
     }
 
+    /** 琉光自己的整页层开着（设置页、曲库、歌单、新手引导）：Hud 的底部切页热区让路——
+     *  歌单的搜索键盘、刻度条就在屏幕底下那条，热区不躲开会把打字、拖刻度抢成切页手势 */
+    public boolean lgPagesOpen() {
+        return prefsOpen || libOn || (ui != null && (ui.shelfOn() || ui.guiding()));
+    }
+
     /** 设置页里点了一块（主线程） */
     @Override public void prefSet(final String k, final Object v) { main.post(() -> applySetting(k, v)); }
 

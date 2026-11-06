@@ -1634,7 +1634,7 @@ final class Hud extends View {
     // ================= 手势：只接可点的地方 =================
     private int downOn = -1;
     @Override public boolean onTouchEvent(MotionEvent e) {
-        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：只接上沿 / 左右两边的切页热区，其余让给下面的 GLSurfaceView
+        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：只接最下方一条切页热区，其余让给下面的 GLSurfaceView
         float x = e.getX();
         float y = e.getY() - topShift; // 转入被上移元素的坐标系（底部数据仍用屏幕坐标）
         float yScreen = e.getY();
@@ -1652,9 +1652,8 @@ final class Hud extends View {
                     if (downOn < 0 && allR.contains(x, y)) downOn = 2;
                     if (downOn < 0 && pillOn && pillR.contains(x, y)) downOn = 1;
                     if (downOn < 0 && !coverR.isEmpty() && coverR.contains(x, y)) downOn = 22; // 封面：打开放歌的 App
-                    if (downOn < 0 && cardR.contains(x, y)) downOn = 20; // 卡片其余区域：左右拖拽切回车模（按钮/封面已先判定）
+                    // 切页只认最下方一条（开头那个 statsR 判定，三页一致）；卡片正文不再切页
                 }
-                if (downOn < 0) downOn = 20; // 音乐卡片背景（歌词/留白等）：左右滑动切回车模
                 return true;
             }
             for (int i = 0; i < listR.size(); i++) if (listR.get(i).contains(x, y)) downOn = 100 + i;
@@ -1662,7 +1661,6 @@ final class Hud extends View {
             if (downOn < 0 && allR.contains(x, y)) downOn = 2;
             if (downOn < 0 && !demoR.isEmpty() && demoR.contains(x, y)) downOn = 3;
             if (downOn < 0 && stOpen) { tap.close(); return false; } // 点别处收起列表（同网页版），这一下照常交给 3D
-            if (downOn < 0 && yScreen < r(1.5f)) { downOn = 20; return true; } // 车模页顶部栏带：左右滑动切到音乐卡片（中间车身仍让 3D 自转）
             return downOn >= 0;
         }
         if (downOn < 0) return false;
@@ -1707,33 +1705,23 @@ final class Hud extends View {
         return true;
     }
 
-    // ================= 第三页（琉光）：手势按原版 SceneView 交给 3D 画布自己接，Hud 只留窄边切页 =================
+    // ================= 第三页（琉光）：手势按原版 SceneView 交给 3D 画布自己接，Hud 只留最下方一条切页 =================
     /**
      * ★这里不转发触摸。原版琉光里画布是 SceneView（GLSurfaceView）自身的 onTouchEvent，坐标只除以画布宽高；
      *   改由 MainActivity 给 GLSurfaceView 装 OnTouchListener 原样转发（见 installLgTouch），去掉中间这一层换算，
      *   与源码等价，也免掉 cssW / density 任何一处对不上就整片点不中的风险。
-     * 这一层只负责切页：琉光里没有可点东西的几处窄边（上沿、左右两边）横滑翻页。
-     * ★底部不留热区：琉光的播控条就在底部，留一条会把「点播放键」抢走当成切页手势。
-     * 不在热区时返回 false —— 事件让给下面的 GLSurfaceView，由它按原版交给场景。
+     * 切页热区：只保留最下方一条，与车模页的底部数据区（statsR）完全同区——播控条浮在约 0.64H
+     * （底边 0.70H），statsR 从约 0.86H 起，天然错开。原来的上沿横条、左右竖条取消：上沿那条
+     * 曾经把右上角设置键的按下整个吃掉（表现为点了没反应），竖条也容易把播控两端的点击抢走。
+     * 曲库、设置页、歌单（含它的键盘）这些整页层开着时全部让路给 GL——键盘、刻度条就在底下那条。
      */
     private boolean lgTouch(MotionEvent e) {
         float x = e.getX(), y = e.getY();
         int a = e.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             downX = x; downY = y;
-            // ★右上角是琉光自己的设置键 / 全屏键（画在 GL 场景里，见 TopKeys 的 layout：设置键圆心
-            //   (W-0.57rem, 0.55rem)、命中半径 0.37rem，全屏键在它左边一颗、竖排时在它下面一颗）。
-            //   这两颗的范围不算切页热区——否则按下被当成切页手势、GL 那边根本收不到，
-            //   表现就是「点设置键没反应、多点几下才中」（宽屏上齿轮整个落在右边的竖条里，全被吃掉）。
-            float rem = r(1f);
-            boolean nar = W / H < 0.8f;
-            boolean onKeys = nar ? (x > W - 1.05f * rem && y < 1.78f * rem)
-                                 : (x > W - 1.78f * rem && y < 1.0f * rem);
-            // 切页热区：上沿一条，左右各一条。左右按窗口宽的比例算（最多 6%），
-            // 不然七分屏这种窄窗口里 1rem 会把琉光的播控条两端划进热区
-            float ex = Math.min(r(1.0f), W * 0.06f);
-            boolean edge = !onKeys && (y < r(0.35f) || x < ex || x > W - ex);
-            if (!edge) { downOn = -1; return false; } // 不接：穿透给 GLSurfaceView
+            if (lgHost != null && lgHost.lgPagesOpen()) { downOn = -1; return false; } // 整页层开着：GL 自己判
+            if (!statsR.contains(x, y)) { downOn = -1; return false; } // 不在底部条：穿透给 GLSurfaceView
             downOn = 20;
             if (offAnim != null) offAnim.cancel();
             return true;
