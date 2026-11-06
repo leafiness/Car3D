@@ -36,9 +36,23 @@ public class SceneView extends GLSurfaceView {
         ratio = r;
         if (getWidth() > 0) sizeTo(getWidth(), getHeight());
     }
+
+    // 第三页（琉光）：它自己有整套倍率（min(密度,1.5)/密度 × 琉光自适应的倍率），和车况页的画质不是一回事。
+    // -1 表示不接管，按车况页的画质画。琉光源码里这一层是 SceneView.fit()：画布缩小画、系统拉伸到窗口大小
+    private float lgFit = -1;
+    /** 第三页（琉光）接管画布倍率：k 相对窗口，-1 还原成车况页的画质 */
+    public void setLgFit(float k) {
+        if (Math.abs(lgFit - k) < 0.002f) return;
+        lgFit = k;
+        if (getWidth() > 0) sizeTo(getWidth(), getHeight());
+    }
+
+    private int fitW = -1, fitH = -1;
     private void sizeTo(int w, int h) {
-        float k = Math.min(dens, ratio) / dens;
+        float k = lgFit > 0 ? lgFit : Math.min(dens, ratio) / dens;
         final int fw = Math.max(1, Math.round(w * k)), fh = Math.max(1, Math.round(h * k));
+        if (fw == fitW && fh == fitH) return; // 没变就别再设（设了会再来一轮 onSizeChanged）
+        fitW = fw; fitH = fh;
         // 先直接设：第一次布局时画布一建出来就是这个大小。不然建好后再改尺寸，主线程要等 GL 线程画完一帧（GLSurfaceView 的 onWindowResize），那时 GL 线程正在建车
         getHolder().setFixedSize(fw, fh);
         post(() -> getHolder().setFixedSize(fw, fh)); // 在布局过程中直接设有时不生效：下一轮再设一次

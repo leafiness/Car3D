@@ -37,9 +37,10 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private final SongCovers covers;
     private final Handler main = new Handler(Looper.getMainLooper());
     private Ui ui;
-    private boolean created, booted, day;
+    private boolean created, booted, day, onPage;
     private int lastW = -1, lastH = -1, rev;
     private float cssW = 1, cssH = 1, resK = 1;
+    private boolean resRecalled;
 
     // 上一份快照（只在真的变了才递增 rev，Scene 按 rev 判断换歌 / 换歌词，每帧都变会导致歌词反复重建）
     private String lTrack = "", lTitle = "", lArtist = "";
@@ -85,11 +86,27 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     @Override public float cssW() { return cssW; }
     @Override public float cssH() { return cssH; }
     @Override public float res() { return resK; }
-    @Override public void setRes(float k) { resK = k; }
+    /** 场景按帧率自己定的倍率（Scene.resTick）：真的改画布尺寸，不然缩画面这条省 GPU 的路等于没接 */
+    @Override public void setRes(float k) { resK = k; main.post(this::applyRes); }
+
+    /** 画布按「min(密度,1.5)/密度 × 场景倍率」缩着画，系统拉伸到窗口大小（同琉光 SceneView.fit） */
+    private void applyRes() {
+        if (!onPage || dens <= 0) return; // 不在第三页就别动车况页的画布
+        float k = Math.min(dens, 1.5f) / dens * resK;
+        if (glView instanceof com.ljone.car3d.SceneView) ((com.ljone.car3d.SceneView) glView).setLgFit(k);
+    }
+    /** 把画布倍率还给车况页（第三页只借用画布，走了就还原它的画质） */
+    private void releaseRes() {
+        if (glView instanceof com.ljone.car3d.SceneView) ((com.ljone.car3d.SceneView) glView).setLgFit(-1);
+    }
 
     /** MainActivity 量到窗口尺寸后告诉场景（CSS 像素） */
     public void size(float w, float h) {
-        if (w > 1 && h > 1) { cssW = w; cssH = h; }
+        if (w > 1 && h > 1 && (Math.abs(w - cssW) > 0.5f || Math.abs(h - cssH) > 0.5f)) {
+            cssW = w; cssH = h;
+            resRecalled = false; // 换了窗口大小：倍率是逐窗口大小记的，下次进页重新取（同琉光 Res）
+            applyRes();
+        }
     }
     /** 画布尺寸还不准（布局还没走到）时从画布本身量一次 */
     private void syncCss() {
@@ -114,6 +131,13 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     /** 进第三页：第一次进来放开场动画 */
     public void enter() {
         syncCss();
+        onPage = true;
+        // 上次在这个窗口大小上量出来的倍率（同琉光 Res.recall）：一开始就按不卡的尺寸画，别先卡几秒再降
+        if (!resRecalled) {
+            resRecalled = true;
+            resK = Res.recall(ctx, Math.round(cssW) + "x" + Math.round(cssH));
+        }
+        applyRes();
         if (!booted) { booted = true; scene.boot(true); }
         else scene.setOpts(st);
         scene.keepAlive(true); // 停在这一页：极光这些一直在动的效果要接着跑
@@ -122,6 +146,8 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     /** 离开第三页：设置面板收起来，别再持续出帧（GL 画布要还给车况页按需画） */
     public void leavePage() {
         scene.keepAlive(false);
+        onPage = false;
+        releaseRes(); // 画布倍率还给车况页
         if (ui != null) ui.closeAll();
         // 手势可能在切页途中断掉（UP 没送到）：给场景补一个取消，别让它一直以为手指还按着，否则下次进页点播控会没反应
         final long t = SystemClock.uptimeMillis();
