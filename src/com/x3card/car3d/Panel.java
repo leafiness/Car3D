@@ -278,7 +278,7 @@ final class Panel extends Sheet {
             PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
             String v = pi.versionName;
             if (v == null || v.isEmpty()) v = "—";
-            return "V" + v + (S.bool("testBuild") ? "（测试版）" : "");
+            return "V" + v + (Updater.isTestBuild(getContext()) ? "（测试版）" : "");
         } catch (Exception e) { return "V—"; }
     }
     /** 给颜色加透明度（同 Hud.withA） */

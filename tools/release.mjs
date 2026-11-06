@@ -93,16 +93,23 @@ if (process.argv.includes('--changelog-only')) {
 // ---------- 发版：同步日志 → 构建 → 暂存 ----------
 const TEST = process.argv.includes('--test');
 const SETTINGS_FILE = 'src/com/x3card/car3d/Settings.java';
+const MANIFEST_FILE = 'AndroidManifest.xml';
 const TEST_OFF = 'd.put("testBuild", false);';
 const TEST_ON = 'd.put("testBuild", true);';
+const CH_OFF = 'android:name="car3d.channel" android:value="official"';
+const CH_ON = 'android:name="car3d.channel" android:value="test"';
 
-// 测试通道：构建前把 testBuild 默认翻成 true（否则测试版 APK 覆盖安装后仍走正式通道），构建完还原
-let flipped = false;
+// 测试通道：构建前把 testBuild 默认翻成 true（否则测试版 APK 覆盖安装后仍走正式通道），
+// 并把 manifest 里的通道标记改成 test（设置页按它标注「（测试版）」，看实际装的版本），构建完都还原
+let flipped = false, chanFlipped = false;
 if (TEST) {
   let s = read(SETTINGS_FILE);
   if (s.includes(TEST_OFF)) { s = s.replace(TEST_OFF, TEST_ON); write(SETTINGS_FILE, s); flipped = true; }
   else if (!s.includes(TEST_ON)) { console.error('✗ 找不到 Settings.java 里的 testBuild 默认值行'); process.exit(1); }
-  console.log('· 测试通道：构建期已把 testBuild 默认翻为 true');
+  let m = read(MANIFEST_FILE);
+  if (m.includes(CH_OFF)) { m = m.replace(CH_OFF, CH_ON); write(MANIFEST_FILE, m); chanFlipped = true; }
+  else if (!m.includes(CH_ON)) { console.error('✗ 找不到 AndroidManifest.xml 里的通道标记（car3d.channel）'); process.exit(1); }
+  console.log('· 测试通道：构建期已把 testBuild 默认翻为 true、通道标记改为 test');
 }
 
 write('changelog.txt', changelogText);
@@ -125,6 +132,10 @@ try {
   if (flipped) { // 还原 testBuild 默认值，避免污染下一次正式构建
     let s = read(SETTINGS_FILE); s = s.replace(TEST_ON, TEST_OFF); write(SETTINGS_FILE, s); flipped = false;
     console.log('· 已还原 testBuild 默认为 false');
+  }
+  if (chanFlipped) { // 还原通道标记为正式
+    let m = read(MANIFEST_FILE); m = m.replace(CH_ON, CH_OFF); write(MANIFEST_FILE, m); chanFlipped = false;
+    console.log('· 已还原通道标记为 official');
   }
 }
 
