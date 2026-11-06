@@ -61,6 +61,10 @@ final class Updater {
         } catch (Exception e) { return false; }
     }
 
+    /** 给请求加时间戳：部署站走 CDN，同一个地址会拿到缓存里的旧文件（版本号、日志、安装包都一样）——
+     *  这是「一直提示已是最新、收不到更新」的真凶 */
+    private static String bust(String url) { return url + "&t=" + System.currentTimeMillis(); }
+
     /** 缓存安装包（下载中 / 安装中都在这里，安装成功后再删） */
     static File cacheApk(Context c) { return new File(c.getCacheDir(), "update.apk"); }
 
@@ -71,7 +75,7 @@ final class Updater {
     static void check(final Context c, final CheckCb cb) {
         new Thread(() -> {
             try {
-                String txt = get(testBuild(c) ? VER_TEST : VER_URL, 8000);
+                String txt = get(bust(testBuild(c) ? VER_TEST : VER_URL), 8000);
                 String[] lines = txt.split("\n");
                 String remoteName = lines.length >= 1 ? lines[0].trim() : "";
                 int remote = -1;
@@ -93,7 +97,7 @@ final class Updater {
     private static String fetchNotes(Context c) {
         for (int i = 0; i < 3; i++) { // 重试两次：车机网络偶尔不稳，别让日志就这么没了
             try {
-                String t = get(testBuild(c) ? LOG_TEST : LOG_URL, 6000);
+                String t = get(bust(testBuild(c) ? LOG_TEST : LOG_URL), 6000);
                 if (t != null && !t.trim().isEmpty()) return t.trim();
             } catch (Exception e) {
                 Log.w(Uiplus.TAG, "拉更新日志失败（第 " + (i + 1) + " 次）：" + e.getMessage());
@@ -141,7 +145,7 @@ final class Updater {
         try { File p = out.getParentFile(); if (p != null) p.mkdirs(); } catch (Exception ignored) { }
         new Thread(() -> {
             try {
-                HttpURLConnection h = (HttpURLConnection) new URL(testBuild(a) ? APK_TEST : APK_URL).openConnection();
+                HttpURLConnection h = (HttpURLConnection) new URL(bust(testBuild(a) ? APK_TEST : APK_URL)).openConnection();
                 h.setConnectTimeout(10000); h.setReadTimeout(30000);
                 int rc = h.getResponseCode();
                 if (rc < 200 || rc >= 300) throw new IOException("HTTP " + rc);

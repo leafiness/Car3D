@@ -402,19 +402,38 @@ abstract class Sheet extends FrameLayout {
         top.addView(info);
         l.addView(top);
         if (small != null && !small.isEmpty()) {
-            // 说明改成浮窗：点 ⓘ 弹出来，不再原地展开把下面的行顶下去
-            info.setOnClickListener(v -> showTip(l, info, small));
+            // 说明改成浮窗：以 ⓘ 自己为锚点（贴着图标弹出、尖角指回去），不再原地展开把下面的行顶下去
+            info.setOnClickListener(v -> showTip(info, info, small));
         } else {
             info.setVisibility(View.GONE);
         }
         return l;
     }
 
-    /** 说明浮窗：点 ⓘ 弹在标题下方（下面放不下就翻到上面），点浮窗外、按返回键都关；同屏只留一个 */
+    /** 说明浮窗：贴着 ⓘ 弹出（上面带一个指向图标的尖角），下面放不下就翻到图标上方；
+     *  点浮窗外、按返回键都关；同屏只留一个 */
     private android.widget.PopupWindow tipPopup;
+
+    /** 浮窗的小尖角：指向点开的 ⓘ（up=true 尖朝上，浮窗在图标下面） */
+    private final class Tri extends View {
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final android.graphics.Path path = new android.graphics.Path();
+        final boolean up;
+        Tri(Context c, boolean up) { super(c); this.up = up; }
+        @Override protected void onDraw(Canvas c) {
+            int w = getWidth(), h = getHeight();
+            p.setColor(light ? 0xfff7f8fa : 0xff2b3038);
+            path.reset();
+            if (up) { path.moveTo(w / 2f, 0); path.lineTo(w, h); path.lineTo(0, h); }
+            else { path.moveTo(0, 0); path.lineTo(w, 0); path.lineTo(w / 2f, h); }
+            path.close();
+            c.drawPath(path, p);
+        }
+    }
 
     private void showTip(final View anchor, final InfoIcon icon, String text) {
         if (tipPopup != null && tipPopup.isShowing()) { tipPopup.dismiss(); return; } // 再点一次同一个 ⓘ：收起来
+        final int pad = px(0.24f);
         LinearLayout box = new LinearLayout(getContext());
         box.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
@@ -422,7 +441,7 @@ abstract class Sheet extends FrameLayout {
         bg.setColor(light ? 0xfff7f8fa : 0xff2b3038);
         bg.setStroke(Math.max(1, Math.round(dens)), light ? 0x1a000000 : 0x1fffffff);
         box.setBackground(bg);
-        box.setPadding(px(0.24f), px(0.18f), px(0.24f), px(0.18f));
+        box.setPadding(pad, px(0.18f), pad, px(0.18f));
         TextView t = new TextView(getContext());
         t.setText(text);
         t.setTextColor(TXT);
@@ -430,24 +449,36 @@ abstract class Sheet extends FrameLayout {
         t.setLineSpacing(0, 1.45f);
         t.setMaxWidth(px(6.0f)); // 长说明自动换行，不铺满整屏
         box.addView(t);
-        final android.widget.PopupWindow p = new android.widget.PopupWindow(box, -2, -2, true);
+        // 先量卡片，再按「图标在画面上的位置」定浮窗和尖角：浮窗中心尽量对住 ⓘ，尖角指回图标
+        box.measure(View.MeasureSpec.makeMeasureSpec(px(6.0f) + pad * 2, View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int cardW = box.getMeasuredWidth(), cardH = box.getMeasuredHeight();
+        int triW = px(0.34f), triH = px(0.16f);
+        int[] loc = new int[2];
+        anchor.getLocationOnScreen(loc);
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        int iconCx = loc[0] + anchor.getWidth() / 2;
+        int gap = px(0.05f);
+        boolean below = loc[1] + anchor.getHeight() + gap + triH + cardH <= sh - px(0.12f); // 下面放得下就放下面
+        int x = iconCx - cardW / 2;
+        x = Math.max(px(0.12f), Math.min(x, sw - px(0.12f) - cardW)); // 左右别出画面
+        int y = below ? loc[1] + anchor.getHeight() + gap : loc[1] - gap - cardH - triH;
+        // 尖角尖对着图标，横向跟着浮窗位置走（被画面边缘夹过之后仍然指得准）
+        int tipX = Math.max(px(0.3f), Math.min(iconCx - x, cardW - px(0.3f)));
+        LinearLayout outer = new LinearLayout(getContext());
+        outer.setOrientation(LinearLayout.VERTICAL);
+        Tri tri = new Tri(getContext(), below);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(triW, triH);
+        tlp.leftMargin = Math.max(0, tipX - triW / 2);
+        if (below) { tlp.bottomMargin = -Math.max(1, Math.round(dens)); outer.addView(tri, tlp); outer.addView(box, new LinearLayout.LayoutParams(cardW, cardH)); }
+        else { outer.addView(box, new LinearLayout.LayoutParams(cardW, cardH)); tlp.topMargin = -Math.max(1, Math.round(dens)); outer.addView(tri, tlp); }
+        final android.widget.PopupWindow p = new android.widget.PopupWindow(outer, cardW, cardH + triH, true);
         p.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000)); // 要在浮窗外点能关：必须有背景（透明即可）
         p.setOutsideTouchable(true);
         p.setFocusable(true); // 返回键也能关
         p.setOnDismissListener(() -> { icon.setOpen(false); if (tipPopup == p) tipPopup = null; });
         tipPopup = p;
         icon.setOpen(true);
-        // 量一下浮窗大小，决定放下面还是翻到上面、左右别出画面
-        box.measure(View.MeasureSpec.makeMeasureSpec(px(6.0f) + px(0.5f), View.MeasureSpec.AT_MOST),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        int w = box.getMeasuredWidth(), h = box.getMeasuredHeight();
-        int[] loc = new int[2];
-        anchor.getLocationOnScreen(loc);
-        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
-        int x = loc[0];
-        if (x + w > sw - px(0.12f)) x = Math.max(px(0.12f), sw - px(0.12f) - w);
-        int y = loc[1] + anchor.getHeight() + px(0.06f);
-        if (y + h > sh - px(0.12f)) y = Math.max(px(0.12f), loc[1] - h - px(0.06f)); // 下面放不下：翻到上面
         p.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
     }
 

@@ -201,7 +201,7 @@ final class Panel extends Sheet {
         r.addView(label("当前版本", appVersion(), "点一下检查更新", acc()));
         r.setClickable(true);
         r.setOnClickListener(v -> act.act("checkUpdate"));
-        swRow("testBuild", "测试版更新", "打开后才会接收测试版更新（默认只收正式版）");
+        swRow("testBuild", "测试版更新", "打开后接收测试版更新；关掉只收正式版（测试版也会跟着正式版一起更新）");
     }
     /** 3D 车模设置二级页：车模、车漆、轮毂、卡钳、车况页视角 */
     private void rowsModel() {
