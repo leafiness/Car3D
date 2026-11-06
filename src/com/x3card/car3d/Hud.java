@@ -285,7 +285,7 @@ final class Hud extends View {
     }
     /** 车况层有多可见：1 = 车况页（含音乐页），0 = 琉光页。
      *  与 Stage 的 GL 切换点对齐（phase 1.5 进琉光、2.5 出琉光）：到那两处正好淡到 0，琉光页上不会浮着一层车况 */
-    private float lgAlpha() {
+    float lgAlpha() {
         float ph = phase;
         if (ph > 1f && ph <= 1.5f) return 1f - (ph - 1f) / 0.5f;   // 音乐页 → 琉光页：淡出
         if (ph > 1.5f && ph <= 2f) return 0f;                        // 停在琉光页
@@ -1617,15 +1617,7 @@ final class Hud extends View {
     // ================= 手势：只接可点的地方 =================
     private int downOn = -1;
     @Override public boolean onTouchEvent(MotionEvent e) {
-        int am = e.getActionMasked();
-        if (downOn == 30 && (am == MotionEvent.ACTION_UP || am == MotionEvent.ACTION_CANCEL)) {
-            // 琉光那边的手势收尾：不管这一刻相位走到哪，UP 都不能丢——丢了场景会一直以为手指还按着（grab 不清），
-            // 之后再点播控、点封面全都没反应
-            if (lgHost != null) lgHost.touch(am == MotionEvent.ACTION_UP ? 2 : 3, e.getX() / dens, e.getY() / dens, e.getEventTime());
-            downOn = -1;
-            return true;
-        }
-        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：手势交给琉光，只有上边缘 / 左右两边留给切页
+        if (lgAlpha() <= 0.001f) return lgTouch(e); // 停在琉光页：只接上沿 / 左右两边的切页热区，其余让给下面的 GLSurfaceView
         float x = e.getX();
         float y = e.getY() - topShift; // 转入被上移元素的坐标系（底部数据仍用屏幕坐标）
         float yScreen = e.getY();
@@ -1698,11 +1690,14 @@ final class Hud extends View {
         return true;
     }
 
-    // ================= 第三页（琉光）：手势整个交给琉光，只留窄边用来切页 =================
+    // ================= 第三页（琉光）：手势按原版 SceneView 交给 3D 画布自己接，Hud 只留窄边切页 =================
     /**
-     * 琉光页自己不画任何东西，触摸要原样转给 3D 场景（点播放键、点封面、上下翻歌词、左右拖转场景都在那边）。
-     * 切页只留三条看不见的热区：上边缘、左右两边——都是琉光里没有可点东西的地方，在这几处横滑就切回音乐页 / 车况页。
-     * ★底部不留热区：琉光的播控条就在底部，留一条会把「点播放键」抢走当成切页手势（表现为播控点不动）。
+     * ★这里不转发触摸。原版琉光里画布是 SceneView（GLSurfaceView）自身的 onTouchEvent，坐标只除以画布宽高；
+     *   改由 MainActivity 给 GLSurfaceView 装 OnTouchListener 原样转发（见 installLgTouch），去掉中间这一层换算，
+     *   与源码等价，也免掉 cssW / density 任何一处对不上就整片点不中的风险。
+     * 这一层只负责切页：琉光里没有可点东西的几处窄边（上沿、左右两边）横滑翻页。
+     * ★底部不留热区：琉光的播控条就在底部，留一条会把「点播放键」抢走当成切页手势。
+     * 不在热区时返回 false —— 事件让给下面的 GLSurfaceView，由它按原版交给场景。
      */
     private boolean lgTouch(MotionEvent e) {
         float x = e.getX(), y = e.getY();
@@ -1713,15 +1708,9 @@ final class Hud extends View {
             // 不然七分屏这种窄窗口里 1rem 会把琉光的播控条两端划进热区
             float ex = Math.min(r(1.0f), W * 0.06f);
             boolean edge = y < r(0.35f) || x < ex || x > W - ex;
-            downOn = edge ? 20 : 30;
-            if (edge) { if (offAnim != null) offAnim.cancel(); }
-            else if (lgHost != null) lgHost.touch(0, x / dens, y / dens, e.getEventTime());
-            return true;
-        }
-        if (downOn == 30) { // 琉光自己处理
-            if (lgHost != null && (a == MotionEvent.ACTION_MOVE || a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL))
-                lgHost.touch(a == MotionEvent.ACTION_MOVE ? 1 : a == MotionEvent.ACTION_UP ? 2 : 3, x / dens, y / dens, e.getEventTime());
-            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) downOn = -1;
+            if (!edge) { downOn = -1; return false; } // 不接：穿透给 GLSurfaceView
+            downOn = 20;
+            if (offAnim != null) offAnim.cancel();
             return true;
         }
         if (downOn != 20) return false;

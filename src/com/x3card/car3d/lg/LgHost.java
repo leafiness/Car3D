@@ -208,12 +208,13 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     /** 换画布重建：收掉封面那几个后台线程 */
     public void quit() { covers.quit(); }
 
-    // ---------- 手势（Hud 把第三页的触摸转过来；x、y 是 CSS 像素） ----------
-    public void touch(final int a, float x, float y, long t) {
-        syncCss();
-        final float w = cssW, h = cssH;
-        if (w <= 1 || h <= 1) return;
-        final float nx = x / w, ny = y / h;
+    // ---------- 手势 ----------
+    /**
+     * ★和原版 SceneView.onTouchEvent 一字不差：坐标只除以画布自身的宽高，再交给场景。
+     * 原版就是这么做的（`e.getX() / getWidth()`），任何中间层的 density / CSS 换算都不需要，
+     * 也不会因为某一处尺寸没同步就让命中判定整片偏掉。
+     */
+    public void touchNorm(final int a, float nx, float ny, long t) {
         if (a == 0) touchN.incrementAndGet();
         glView.queueEvent(() -> scene.touch(a, nx, ny, t));
     }
@@ -234,20 +235,27 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
                       String[] lines, long[] times, int cur, long dur, long pos, Bitmap cover) {
         String tr = track == null ? "" : track, ti = title == null ? "" : title, ar = artist == null ? "" : artist;
         String[] ls = lines == null ? NO_LINES : lines;
-        // 先看有没有真的变：Hud 每帧都会推一份，没变就不建对象、不叫醒场景
-        boolean chTrack = !tr.equals(lTrack) || !ti.equals(lTitle) || !ar.equals(lArtist) || dur != lDur;
+        // ★换歌只认曲目号（没有曲目号时才认歌名+歌手）。原版这个判定在 MediaState 内部由它自己维护；
+        //   桥接层要是把时长也算进去，车机把 duration 微调一次就被当成换了歌 —— 场景会反复「等新封面」，
+        //   歌词停在原处不动、封面反复翻面。这是「歌词不滚动」的一个真正来源。
+        boolean chText = !ti.equals(lTitle) || !ar.equals(lArtist);
+        // 有曲目号就只认曲目号；没有曲目号（蓝牙这类）才认歌名+歌手。
+        // 曲目号从有变成空（车机偶尔漏报）不算换歌，沿用上一首的号 —— 否则会被当成一首全新的歌
+        boolean chTrack = !tr.isEmpty() ? !tr.equals(lTrack) : (lTrack.isEmpty() && chText);
+        // 先看有没有真的变：Hud 会定时推，没变就不建对象、不叫醒场景
         boolean chLines = !sameLines(ls, times);
         boolean chCover = cover != lCover;
         boolean chCur = cur != lCur;
-        boolean idle = !chTrack && !chLines && !chCover && !chCur && playing == lPlaying0 && on == lOn0;
+        boolean idle = !chTrack && !chText && !chLines && !chCover && !chCur && playing == lPlaying0 && on == lOn0 && dur == lDur;
         long now = SystemClock.elapsedRealtime();
         // 什么都没变、也没到半秒：连快照都不建（播放位置由 Scene 自己按墙钟往后推，不用每帧对齐）
         if (idle && now - lastPushAt < 400) return;
-        if (chTrack) { rTrack = ++rev; lTrack = tr; lTitle = ti; lArtist = ar; lDur = dur; }
+        if (chTrack) { rTrack = ++rev; lTrack = tr; lTitle = ti; lArtist = ar; }
+        else if (chText) { lTitle = ti; lArtist = ar; } // 歌名/歌手变了：只换文字，不算换歌
         if (chLines) { rLines = ++rev; lLines = ls; lTimes = times == null ? NO_TIMES : times; }
         if (chCover) { rCover = ++rev; lCover = cover; }
         if (chCur) { rCur = ++rev; lCur = cur; }
-        lOn0 = on; lPlaying0 = playing; lastPushAt = now;
+        lDur = dur; lOn0 = on; lPlaying0 = playing; lastPushAt = now;
 
         MediaState.Snap s = new MediaState.Snap();
         s.on = on;
@@ -265,7 +273,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         s.dur = dur;
         s.posBase = pos;
         s.posAt = now;
-        s.cover = cover;
+        s.cover = cover != null ? cover : placeholder(ti, ar);
         s.coverTrack = s.track;
         s.heart = BydMedia.HIDE;
         s.revTrack = rTrack;
@@ -273,6 +281,16 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         s.revCover = rCover;
         s.revCur = rCur;
         scene.setSnap(s);
+    }
+
+    /** 宿主没给封面（蓝牙音乐、没内嵌封面的歌）时用琉光自己的占位封面，同原版 MediaState.makeCover。
+     *  否则场景在换歌后一直认为「这首的封面还没到」（Scene.syncMedia 的 pend 分支），歌词会停在原处不动 */
+    private Bitmap phCover;
+    private String phKey = "";
+    private Bitmap placeholder(String ti, String ar) {
+        String k = ti + "\u0001" + ar;
+        if (phCover == null || !k.equals(phKey)) { phKey = k; phCover = MediaState.makeCover(ti, ar); }
+        return phCover;
     }
 
     /** 歌词有没有真的变（Hud 每帧都传一份新的数组/时间表：按内容比，不然每帧都当成换歌词，歌词贴图会反复重建） */

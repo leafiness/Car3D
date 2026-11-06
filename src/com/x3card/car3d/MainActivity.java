@@ -152,6 +152,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         page.unitOf = data::unit;
         view = new SceneView(this, stage, S.bool("aa"));
         view.setRatio(S.fx().ratio);
+        view.setOnTouchListener(this::lgTouch); // 第三页：画布自己接手势（同原版 SceneView.onTouchEvent）
         root.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
         final CarPage p = page;
         final Map<String, Object> car = data.car(), sys = data.sys();
@@ -202,6 +203,28 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             ui.setPagePhase(idx == 0 ? ph : 1f); // 非车况页藏掉胎压标签
         });
         acOk();
+    }
+
+    /**
+     * 第三页（琉光）的手势：★照原版 liuguang 的 SceneView.onTouchEvent 原样实现——
+     * 只把坐标除以画布自身的宽高，然后整串交给场景（点播控、点封面、上下翻歌词、左右拖转都在那边判）。
+     * 原版就是这样，中间不经过任何 density / CSS 换算，少一层就少一处对不上的可能。
+     * 不在第三页（车况页/音乐页）返回 false，事件照旧给上层那套。
+     * 切页热区仍由 Hud 先接（它在画布之上），所以这里只负责琉光自己的区域。
+     */
+    private boolean lgTouch(android.view.View v, android.view.MotionEvent e) {
+        if (lgHost == null || ui == null) return false;
+        if (ui.hud.lgAlpha() > 0.001f) return false; // 不在第三页
+        int a;
+        switch (e.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_DOWN: a = 0; break;
+            case android.view.MotionEvent.ACTION_MOVE: a = 1; break;
+            case android.view.MotionEvent.ACTION_UP: a = 2; break;
+            case android.view.MotionEvent.ACTION_CANCEL: a = 3; break;
+            default: return true; // 第二根手指：不管（同原版）
+        }
+        lgHost.touchNorm(a, e.getX() / Math.max(1, v.getWidth()), e.getY() / Math.max(1, v.getHeight()), e.getEventTime());
+        return true;
     }
 
     @Override protected void onStart() {
