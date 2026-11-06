@@ -202,8 +202,6 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         if ("heart".equals(cmd)) return; // 收藏是车机媒体控制器的，car3d 这边不给：红心不出现
         final String m = "toggle".equals(cmd) ? "togglePlayPause" : cmd;
         if ("toggle".equals(cmd)) { pFlip = !lPlaying0; pFlipAt = SystemClock.elapsedRealtime(); }
-        pressN.incrementAndGet();
-        lastCmd = cmd;
         main.post(() -> act.media(m));
     }
     @Override public void seek(final long ms) { if (act != null) main.post(() -> act.seek(ms)); }
@@ -245,19 +243,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
      * 也不会因为某一处尺寸没同步就让命中判定整片偏掉。
      */
     public void touchNorm(final int a, float nx, float ny, long t) {
-        if (a == 0) touchN.incrementAndGet();
         glView.queueEvent(() -> scene.touch(a, nx, ny, t));
-    }
-
-    // ---------- 自检（第三页左上角一行小字，定位「摸不到 / 命中不了 / 命令没发」） ----------
-    private final java.util.concurrent.atomic.AtomicInteger touchN = new java.util.concurrent.atomic.AtomicInteger();
-    private final java.util.concurrent.atomic.AtomicInteger pressN = new java.util.concurrent.atomic.AtomicInteger();
-    private volatile String lastCmd = "";
-    /** 收、发计数：触=手指按到场景的次数、令=真的发出媒体命令的次数 */
-    public String diag() {
-        String s = "触" + touchN.get() + " 令" + pressN.get() + (lastCmd.isEmpty() ? "" : "·" + lastCmd);
-        if (scene != null) s += " " + scene.diag();
-        return s;
     }
 
     // ---------- 媒体数据桥接 ----------

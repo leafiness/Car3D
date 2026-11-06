@@ -223,12 +223,11 @@ final class Hud extends View {
 
     // ================= 画 =================
     @Override protected void onDraw(Canvas c) {
-        drawN++;
         if (pageIdx == 2) pushLg(); // 第三页：把当前媒体快照推给琉光 3D 场景
         // 第三页整个交给琉光：车况这一点东西都不画（顶栏、车况图标、车速、底部数据、页面提示全没有）。
         // 滑动切页时按 lgAlpha 淡出淡入，且在 GL 切换点（phase 1.5 / 2.5）正好淡到 0，不会有一层车况盖在琉光上
         float lgA = lgAlpha();
-        if (lgA <= 0.001f) { if (lgHost != null && LG_DBG) drawLgDbg(c); return; }
+        if (lgA <= 0.001f) return;
         int lgSave = lgA < 0.999f ? c.saveLayerAlpha(0, 0, W, H, Math.round(255 * lgA), Canvas.ALL_SAVE_FLAG) : -1;
         // 顶栏、车况图标、车速、下面那行字在两个页面都照常显示，浮在音乐整页背景之上
         // 底部车况数据固定不动；其余元素整体随 topShift 上移（drawStats 在平移之外单独绘制）
@@ -698,23 +697,7 @@ final class Hud extends View {
             postDelayed(this, pageIdx == 2 ? 200 : 900);
         }
     };
-    // ================= 第三页自检字（定位「摸不到 / 命中不了 / 命令没发」；确认完就关掉） =================
-    private static final boolean LG_DBG = true;
-    private int drawN, pushN, mediaN;
-    private void drawLgDbg(Canvas c) {
-        String s = "d" + drawN + " " + lgHost.diag();
-        // 第二行：推=推给琉光的次数、媒=收到媒体快照的次数、位=播放位置(秒)、时=每句时间条数、h=当前句
-        String s2 = "推" + pushN + " 媒" + mediaN + " 位" + (livePos() / 1000) + " 时" + lyrTimes.size() + " h" + lyrIdx + " L" + lyrics.size();
-        p.setTypeface(Typeface.DEFAULT);
-        p.setTextSize(r(0.17f));
-        p.setTextAlign(Paint.Align.LEFT);
-        float w = Math.max(p.measureText(s), p.measureText(s2)) + r(0.18f), h = r(0.56f), x0 = r(0.14f), y0 = r(0.12f);
-        p.setColor(0x99000000);
-        c.drawRoundRect(x0, y0, x0 + w, y0 + h, r(0.07f), r(0.07f), p);
-        p.setColor(0xffffffff);
-        c.drawText(s, x0 + r(0.09f), y0 + h * 0.42f, p);
-        c.drawText(s2, x0 + r(0.09f), y0 + h * 0.84f, p);
-    }
+    // ================= 推送给琉光 =================
     /** 把 car3d 已有的媒体快照桥接给琉光场景（不另开宿主会话） */
     // 推给琉光的歌词数组（Hud 每帧都推一份：没变就沿用同一个数组，不然 LgHost 每次都要逐行比一遍）
     private String[] lgLines;
@@ -723,7 +706,6 @@ final class Hud extends View {
     private int lgN = -1;
     private void pushLg() {
         if (lgHost == null) return;
-        pushN++;
         List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics;
         if (all != lgSrc || all.size() != lgN) {
             lgSrc = all;
@@ -815,7 +797,7 @@ final class Hud extends View {
             playing = false; mTrackId = ""; mPosReported = -1; lyrStale = ""; invalidate(); return;
         }
         mHadMedia = true;
-        if (m != null) { mediaN++; lastMediaAt = SystemClock.elapsedRealtime(); }
+        if (m != null) lastMediaAt = SystemClock.elapsedRealtime();
         String prevLyric = mLyric; // 换歌前那句（下面 trackChanged 时记为「上一首残留的那句」）
         mTitle = m.optString("title", ""); mArtist = m.optString("artist", "");
         mLyric = lyricText(m.optString("lyric", "")); mCover = m.optString("coverUrl", "");

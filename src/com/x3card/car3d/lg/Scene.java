@@ -141,14 +141,6 @@ final class Scene implements GLSurfaceView.Renderer {
         return Math.max(0, c);
     }
 
-    /** 第三页左上角那行自检字用的（主线程读，只读几个不会崩的标量） */
-    String diag() {
-        return "就" + (ready ? 1 : 0) + " 播" + (MS.playing ? 1 : 0)
-            + " 句" + MS.cur + "/" + MS.lines.length + "/" + lines.length
-            + " 键" + lastKey;
-    }
-    private volatile int lastKey = -9; // 上一次按下命中的播控键（-1 没命中，-9 还没按过）
-
     /** 换了歌、等这首的封面认准了再翻面（见 syncMedia） */
     private static final class Pend { int dir; float at; int[] st; }
     private Pend pend;
@@ -264,7 +256,10 @@ final class Scene implements GLSurfaceView.Renderer {
         + "         + vec2(cos(p.x * 2.6 - p.y * 1.8 - t * 1.6), sin(p.x * 1.1 + p.y * 2.7 + t * 1.4)) * 0.28\n"
         + "         + vec2(sin(p.x * 5.1 + p.y * 0.7 + t * 2.4), cos(p.y * 5.9 - p.x * 0.9 - t * 2.1)) * 0.14;\n"
         + "  float dist = -vV.z;\n"
-        + "  vec2 uv = vR.xy / vR.w + n * 0.016 * clamp(9.0 / dist, 0.2, 1.0);\n"
+        // 水波扭曲倒影的幅度随距离走：屏幕下部（贴近镜头、播控条就落在这里）波纹要轻，
+        // 倒影才看得清自己是什么；远处（掠射角大）才让波纹把倒影揉开。原式 9/dist 是近处最重，
+        // 播控条倒影就在最重的那一带，字和圆角被揉成锯齿一样地抖。
+        + "  vec2 uv = vR.xy / vR.w + n * 0.014 * clamp(dist * 0.06, 0.4, 1.0);\n"
         + "  vec3 refl = texture(uRefl, uv).rgb * 0.5 + (texture(uRefl, uv + vec2(0.0, 0.005)).rgb + texture(uRefl, uv - vec2(0.0, 0.005)).rgb) * 0.25;\n"
         + "  float c = clamp(dot(normalize(vN), normalize(-vV)), 0.0, 1.0);\n"
         + "  float fres = 0.1 + 0.9 * pow(1.0 - c, 4.0);\n"
@@ -561,11 +556,18 @@ final class Scene implements GLSurfaceView.Renderer {
     private void layout() {
         narrow = W / H < 0.8f;
         if (!narrow) {
-            C = H * 0.4f; water = -H * 0.21f; cx = -W / 2 + W * 0.08f + C / 2; cy = water + H * 0.035f + C / 2; ry = 0.42f;
+            C = H * 0.4f; water = -H * 0.21f;
+            // 封面贴左边：左边距要同时容得下「屏宽的 8%」和「封面自己的余量」（玻璃砖是斜置的，
+            // 还有极轻的呼吸摆动、左侧光晕）。超宽比不极端时（2:1 ～ 2.5:1）8% 屏宽会小于半个封面，
+            // 封面左下角就会切出画面（车机上就是这个现象），所以取两者的大值。
+            float cPad = Math.max(W * 0.08f, C * 0.64f);
+            cx = -W / 2 + cPad + C / 2; cy = water + H * 0.035f + C / 2; ry = 0.42f;
             Fpx = H * 0.068f; maxW = W * 0.5f;
             px = W * 0.15f; py = H * 0.14f; R = H * 0.46f; yaw = (float) (-Math.PI / 6); center = true;
             tX = cx - C / 2; tY = H / 2 - H * 0.075f; tF = H * 0.05f; aF = H * 0.034f; tW = W * 0.4f; aY = tY - H * 0.06f;
-            pillX = cx; pillW = Math.max(C * 1.12f, W * 0.34f); pillH = H * 0.1f;
+            pillW = Math.max(C * 1.12f, W * 0.34f); pillH = H * 0.1f;
+            // 控制条跟着封面居中，但宽屏下它的左端会顶出画面（左圆角被切平），往右收一点
+            pillX = Math.max(cx, -W / 2 + W * 0.03f + pillW * 0.5f);
         } else {
             C = H * 0.16f; cx = -W / 2 + W * 0.09f + C / 2; cy = H / 2 - H * 0.055f - C / 2; ry = 0.36f;
             Fpx = H * 0.058f; maxW = W * 0.84f;
@@ -1508,7 +1510,6 @@ final class Scene implements GLSurfaceView.Renderer {
             g.seek = seekHit(ex, ey);
             g.cover = !g.seek && onCover(lx, ly);
             g.key = g.seek ? -1 : pillHit(ex, ey);
-            lastKey = g.key;
             g.s0 = LY.scroll.x;
             g.ty0 = (fx - 0.5f) * 0.12f;
             grab = g;
