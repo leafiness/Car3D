@@ -535,7 +535,18 @@ final class Scene implements GLSurfaceView.Renderer {
         pText = new G.Prog(V_UV, F_TEXT);
         pImg = new G.Prog(V_UV, F_IMG);
         pPill = new G.Prog(V_SOLID, F_PILL);
-        pIcons = G.vk() ? new G.Prog[] { new G.Prog(V_UV, F_ICONS_A), new G.Prog(V_UV, F_ICONS_B), new G.Prog(V_UV, F_ICONS_C), new G.Prog(V_UV, F_ICONS_D), new G.Prog(V_UV, F_ICONS_E) } : new G.Prog[] { new G.Prog(V_UV, F_ICONS) };
+        // ★控制条的图形：GL 先试整段（一次画完最省），编不过就退回拆成五段画。
+        //   上游在 Vulkan 上已经遇到"这台车的驱动编不了整段"（太大），拆成两段时带取贴图那段还编错过，
+        //   只能拆五次；而 GL 分支上游一直用整段、没人验证过。car3d 只能走 GL，这一版又给整段加了
+        //   播放模式的采样（更长），一旦链不上，播放键、上下首、进度圈、时间就全都不画了
+        //   —— 表现成"播控条只剩一块玻璃底"。所以这里按编译结果自动选：失败就换拆段。
+        if (G.vk()) {
+            pIcons = new G.Prog[] { new G.Prog(V_UV, F_ICONS_A), new G.Prog(V_UV, F_ICONS_B), new G.Prog(V_UV, F_ICONS_C), new G.Prog(V_UV, F_ICONS_D), new G.Prog(V_UV, F_ICONS_E) };
+        } else {
+            G.Prog all = new G.Prog(V_UV, F_ICONS);
+            pIcons = all.ok ? new G.Prog[] { all }
+                : new G.Prog[] { new G.Prog(V_UV, F_ICONS_A), new G.Prog(V_UV, F_ICONS_B), new G.Prog(V_UV, F_ICONS_C), new G.Prog(V_UV, F_ICONS_D), new G.Prog(V_UV, F_ICONS_E) };
+        }
         pSeek = new G.Prog(V_UV, F_SEEK);
         pDust = new G.Prog(V_DUST, F_DUST);
         pPart = new G.Prog(V_PART, F_PART);

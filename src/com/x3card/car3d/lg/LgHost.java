@@ -266,6 +266,18 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     }
 
     // ---------- Stage 调用 ----------
+    /**
+     * ★画布重建（GL 上下文丢了：切后台被回收显存、系统换驱动、拖动分屏重建 Surface）。
+     * 这时所有 program / mesh / 贴图编号都作废，但 created 还停在 true，draw() 就不会再调
+     * scene.onSurfaceCreated —— 第三页会花屏、只剩色块或者干脆什么都不画。
+     * Stage.onSurfaceCreated 里叫一次，下一帧重新建。
+     */
+    public void surfaceCreated() {
+        created = false;
+        lastW = -1;
+        G.resetCache(); // 车况页那边也会重建自己的 program：这边记的"已绑定"全不作数了
+    }
+
     /** 第一次进第三页时补一次 surface 创建；之后每帧直接委托 */
     public void draw(GL10 gl, int w, int h) {
         syncCss();

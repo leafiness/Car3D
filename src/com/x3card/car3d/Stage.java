@@ -124,6 +124,8 @@ public final class Stage implements GLSurfaceView.Renderer {
         renderer.outputEncoding = Programs.SRGB;
         renderer.clearR = renderer.clearG = renderer.clearB = renderer.clearA = 0;
         started = true;
+        // ★画布重建：GL 上下文一丢，琉光那边的 program / mesh / 贴图编号全作废，得让它下一帧重建成
+        if (lg != null) lg.surfaceCreated();
         // 建车放到这一帧画完以后：画布第一次定尺寸时主线程要等第一帧画完（GLSurfaceView 的 onWindowResize），在这里建车主线程就跟着卡住，大车模会弹"应用无响应"
         if (pending != null) main.post(() -> { if (view != null) view.queueEvent(this::activatePending); });
     }

@@ -21,6 +21,9 @@ final class G {
     static final String HEAD = "#version 300 es\nprecision highp float;\n";
     static final String HEAD_F = "#version 300 es\nprecision mediump float;\n";
 
+    /** 上一个 program() 有没有链成功（GL 用；Vulkan 不走这里）。车机驱动对超长片元着色器会失败，见 Scene 的 pIcons */
+    static boolean lastLinkOk = true;
+
     static int program(String vs, String fs) {
         int p = GLES30.glCreateProgram();
         GLES30.glAttachShader(p, shader(GLES30.GL_VERTEX_SHADER, HEAD + vs));
@@ -28,7 +31,8 @@ final class G {
         GLES30.glLinkProgram(p);
         int[] ok = new int[1];
         GLES30.glGetProgramiv(p, GLES30.GL_LINK_STATUS, ok, 0);
-        if (ok[0] == 0) Log.e(Uiplus.TAG, "着色器链接失败：" + GLES30.glGetProgramInfoLog(p));
+        lastLinkOk = ok[0] != 0;
+        if (!lastLinkOk) Log.e(Uiplus.TAG, "着色器链接失败：" + GLES30.glGetProgramInfoLog(p));
         return p;
     }
 
@@ -63,6 +67,7 @@ final class G {
      */
     static final class Prog {
         final int id;
+        final boolean ok; // 着色器编/链成功（GL 才有意义；失败时画不出东西）
         final Vk vk;
         Vk.Stage vsI, fsI;
         float[] vu, fu;
@@ -75,8 +80,9 @@ final class G {
         private int un, hint = -1;
         Prog(String vs, String fs) {
             vk = ST.get().vk;
-            if (vk == null) { id = program(vs, fs); return; }
+            if (vk == null) { id = program(vs, fs); ok = lastLinkOk; return; }
             id = vk.prog(HEAD + vs, HEAD_F + fs, this);
+            ok = true;
             if (vsI != null && vsI.size > 0) vu = new float[vsI.size / 4];
             if (fsI != null && fsI.size > 0) fu = new float[fsI.size / 4];
         }
