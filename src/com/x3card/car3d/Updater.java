@@ -115,9 +115,12 @@ final class Updater {
         if (blocks.isEmpty()) return out;
         int cur = -1;
         if (remoteName != null && !remoteName.isEmpty()) {
+            // 测试通道的版本名带「测试版」字样（0.8.0 测试版）：比对时先去掉再匹配段落头 v0.8.0
+            String bare = remoteName.replace("测试版", "").trim();
             for (int i = 0; i < blocks.size(); i++) {
                 String head = blocks.get(i).split("\\n")[0].trim();
-                if (head.equalsIgnoreCase("v" + remoteName) || head.equalsIgnoreCase(remoteName)) { cur = i; break; }
+                if (head.equalsIgnoreCase("v" + remoteName) || head.equalsIgnoreCase(remoteName)
+                    || head.equalsIgnoreCase("v" + bare) || head.equalsIgnoreCase(bare)) { cur = i; break; }
             }
         }
         if (cur < 0) cur = 0; // 版本号对不上：日志是最新的在最前，就当第一段是当前版本

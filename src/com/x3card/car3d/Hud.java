@@ -1431,9 +1431,12 @@ final class Hud extends View {
         String mode = S.str("mBgMode");
         if ("theme".equals(mode)) { rgb = drawThemeBg(c, full); } // 深浅模式：背景与车模页（车况页）完全一致（同套影棚/暖调/冷调径向渐变 + 同 darkK）
         else if ("fixed".equals(mode)) { rgb = hexRgb(S.str("mBgColor")); if (rgb == null) rgb = BG_FALLBACK; fillGrad(c, full, shade(rgb, 1.06f), shade(rgb, 0.94f)); }
-        else { // 跟随封面：车况页（车模页）为深色主题时，封面亮背景压暗一些，避免和深色车况页割裂、刺眼
+        else { // 跟随封面：车况页（车模页）为深色主题时，封面亮背景压暗一些，避免和深色车况页割裂、刺眼。
             rgb = coverDominant(); if (rgb == null) rgb = BG_FALLBACK;
-            if (darkK > 0.01f) rgb = shade(rgb, 1 - 0.34f * darkK); // 深色越重压得越暗（darkK=1 时约 66% 亮度）
+            // 压暗幅度跟颜色深浅走：颜色越浅压得越狠（亮色最多压到两成半），深色本就融在暗页里只轻压——
+            // 不然浅色封面在深色页上还是一块刺眼的亮斑、深色封面又被压得死黑
+            float dim = coverDim(rgb);
+            if (dim > 0.01f) rgb = shade(rgb, 1 - dim);
             drawCoverBg(c, full, rgb);
         }
         // 朝文字色方向压一层极淡 scrim，避免中明度背景文字发灰（深浅模式不压：要和车模页背景一模一样）
@@ -1490,20 +1493,28 @@ final class Hud extends View {
             fillGrad(c, R, shade(rgb, 1.04f), shade(rgb, 0.92f));
             if (coverBlurBm != null && !coverBlurBm.isRecycled()) {
                 if (coverPaint == null) { coverPaint = new Paint(); coverPaint.setFilterBitmap(true); }
-                coverPaint.setAlpha(130); c.drawBitmap(coverBlurBm, null, R, coverPaint); coverPaint.setAlpha(255);
+                float dim = coverDim(rgb);
+                coverPaint.setAlpha((int) (130 * (1 - dim))); // 深色下压暗要连封面糊图一起压，不然亮图把底色顶回去
+                c.drawBitmap(coverBlurBm, null, R, coverPaint); coverPaint.setAlpha(255);
             }
         } else if ("breath".equals(cov)) {
-            drawBlurredCover(c, R, true);
+            drawBlurredCover(c, R, true, coverDim(rgb));
         } else if ("flow".equals(cov)) {
             drawFlow(c, R);
         } else if ("glow".equals(cov)) {
             drawGlow(c, R, rgb);
         }
     }
-    /** 用封面本身的缩糊位图铺满整屏（拉伸即虚化）；breath 时随呼吸轻微缩放，像慢速推拉镜头 */
-    private void drawBlurredCover(Canvas c, RectF R, boolean breath) {
+    /** 深色下跟随封面背景的压暗幅度（0～0.75）：按颜色深浅定——越浅压得越狠，深色只轻压；浅色主题不压 */
+    private float coverDim(int[] c) {
+        if (darkK <= 0.01f) return 0;
+        return Math.max(0.15f, Math.min(0.75f, 0.15f + (lumin(c) - 0.2f) / 0.65f * 0.6f)) * darkK;
+    }
+    /** 用封面本身的缩糊位图铺满整屏（拉伸即虚化）；breath 时随呼吸轻微缩放，像慢速推拉镜头；dim：深色下的压暗幅度 */
+    private void drawBlurredCover(Canvas c, RectF R, boolean breath, float dim) {
         if (coverBlurBm == null || coverBlurBm.isRecycled()) { fillGrad(c, R, shade(BG_FALLBACK, 1.03f), shade(BG_FALLBACK, 0.97f)); return; }
         if (coverPaint == null) { coverPaint = new Paint(); coverPaint.setFilterBitmap(true); }
+        coverPaint.setAlpha((int) (255 * (1 - dim))); // 深色下整张糊图一起压
         RectF dr = R;
         if (breath) {
             double ph = Math.sin(System.currentTimeMillis() / 4200.0) * 0.5 + 0.5; // 0..1
@@ -1512,11 +1523,15 @@ final class Hud extends View {
                            R.centerX() + R.width() * s / 2, R.centerY() + R.height() * s / 2);
         }
         c.drawBitmap(coverBlurBm, null, dr, coverPaint);
+        coverPaint.setAlpha(255);
     }
     /** 双色流动：取封面最亮/最暗两极色做平滑渐变，渐变中心随时间长慢移动，设计感强、不跑色 */
     private void drawFlow(Canvas c, RectF R) {
         int[] hi = (coverLight != null) ? coverLight : shade(BG_FALLBACK, 1.3f);
         int[] lo = (coverDark != null) ? coverDark : shade(BG_FALLBACK, 0.7f);
+        float dh = coverDim(hi), dl = coverDim(lo); // 深色下两极色各自按深浅压暗
+        if (dh > 0.01f) hi = shade(hi, 1 - dh);
+        if (dl > 0.01f) lo = shade(lo, 1 - dl);
         double ang = (System.currentTimeMillis() / 9000.0) % 1.0 * Math.PI * 2;
         float cx = R.centerX() + (float) Math.cos(ang) * R.width() * 0.28f;
         float cy = R.centerY() + (float) Math.sin(ang) * R.height() * 0.28f;

@@ -438,9 +438,13 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         msg.setTextColor(0xffeef1f6); msg.setTextSize(16);
         content.addView(msg);
 
-        // 更新日志（有内容才显示）：当前版本高亮，历史版本灰色小字；超出可在日志区内滚动
-        String[] seg = Updater.splitNotes(notes, remoteName);
-        String cur = seg[0], hist = seg[1];
+        // 更新日志（有内容才显示）：只显示更新版本自己的那一段，不再带历史版本；
+        // 段落头换成弹窗里的版本名——测试通道的版本名带「测试版」字样（v0.8.0 测试版），正式通道就是 v0.8.0
+        String cur = Updater.splitNotes(notes, remoteName)[0];
+        if (!cur.isEmpty()) {
+            int nl = cur.indexOf('\n');
+            cur = "v" + remoteName + (nl >= 0 ? "\n" + cur.substring(nl + 1) : "");
+        }
         {
             TextView ltitle = new TextView(this);
             ltitle.setText("更新日志");
@@ -458,15 +462,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
                 lt.setLineSpacing(dp(3), 1f);
                 box.addView(lt);
             }
-            if (!hist.isEmpty()) {
-                TextView ht = new TextView(this);
-                ht.setText("历史版本\n" + hist);
-                ht.setTextColor(0x88aab4c4); ht.setTextSize(12);
-                ht.setLineSpacing(dp(2), 1f);
-                ht.setPadding(0, dp(8), 0, 0);
-                box.addView(ht);
-            }
-            if (cur.isEmpty() && hist.isEmpty()) { // 没拉到日志：说清楚，别留一片空白让人以为没有日志
+            if (cur.isEmpty()) { // 没拉到日志：说清楚，别留一片空白让人以为没有日志
                 TextView nt = new TextView(this);
                 nt.setText("暂时没取到更新日志（网络不通时会出现，联网后重新点「当前版本」即可）");
                 nt.setTextColor(0x88aab4c4); nt.setTextSize(12);
@@ -475,7 +471,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             }
             sv.addView(box);
             // 高度按行数估算并封顶（超出可在日志区内滚动）
-            int lines = ((cur.isEmpty() ? 0 : cur.split("\n").length) + (hist.isEmpty() ? 0 : hist.split("\n").length)) + 2;
+            int lines = (cur.isEmpty() ? 0 : cur.split("\n").length) + 2;
             int hpx = Math.min(dp(200), Math.max(dp(46), lines * dp(21)));
             sv.setLayoutParams(new LinearLayout.LayoutParams(-1, hpx));
             content.addView(sv);

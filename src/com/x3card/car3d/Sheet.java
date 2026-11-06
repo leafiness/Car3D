@@ -79,7 +79,9 @@ abstract class Sheet extends FrameLayout {
             TXT = 0xffeef1f6; SUB = 0xa6eef1f6; MUTE = 0xb3eef1f6;
             // 深色恢复主题化之前的偏蓝深灰渐变（原 #262a34 → #0f1116），替代 v0.7.14 起的纯黑
             CARD_TOP = 0xff262a34; CARD_BOT = 0xff0f1116; CARD_BORDER = 0x00000000;
-            GROUP_BG = 0xff1c1c1f; GROUP_BORDER = 0x00000000; GROUP_TITLE = 0xff8e8e93;
+            // 分组卡片：改成半透明提亮（同色系浮在面板渐变上），原来是固化的中性深灰 #1c1c1f，
+            // 和面板顶部的偏蓝底色割裂、又比底色深，整块显得发黑
+            GROUP_BG = 0x14ffffff; GROUP_BORDER = 0x00000000; GROUP_TITLE = 0xff8e8e93;
             LINE = 0xff2c2c2e; INFO = 0xff8b97a8; ICON = 0xffd0d4da; SEG_BG = 0x0fffffff; SEG_OFF_TXT = 0x99eef1f6;
             SEG_ON_TXT = 0xffcfe0ff; SEG_ON_BG = 0x1f5b8cff; SW_OFF = 0x24ffffff; TRACK_OFF = 0x24ffffff;
             CHIP_BG = 0x15181e; CHIP_TXT = 0xffeef1f6; BTN_BORDER = 0x29ffffff; BTN_OFF_BG = 0x0fffffff;
