@@ -114,8 +114,29 @@ final class Scene implements GLSurfaceView.Renderer {
     private int[] lyricState() {
         if (pend != null) return pend.st; // 换了歌、封面还没认准：滚轮上还是上一首，停在原来那句
         if (MS.lines.length == 0) return lastSt = new int[] { 0, 1 };
-        return lastSt = new int[] { (int) clamp(MS.cur, 0, lines.length - 1), MS.cur >= 0 ? 1 : 0 };
+        int cur = MS.cur;
+        if (cur < 0) cur = curByPos(); // 宿主没给当前句：按每句时间和播放位置自己算（同琉光的定位兜底）
+        return lastSt = new int[] { (int) clamp(cur, 0, lines.length - 1), cur >= 0 ? 1 : 0 };
     }
+
+    /** 按播放位置找「唱到第几句」：只在快照没带当前句时兜底用 */
+    private int curByPos() {
+        long[] t = MS.times;
+        if (t == null || t.length == 0) return -1;
+        long p = MS.pos();
+        if (p <= 0) return -1;
+        int c = 0;
+        for (int i = 0; i < t.length && i < lines.length; i++) if (t[i] >= 0 && t[i] <= p) c = i;
+        return c;
+    }
+
+    /** 第三页左上角那行自检字用的（主线程读，只读几个不会崩的标量） */
+    String diag() {
+        return "就" + (ready ? 1 : 0) + " 播" + (MS.playing ? 1 : 0)
+            + " 句" + MS.cur + "/" + MS.lines.length + "/" + lines.length
+            + " 键" + lastKey;
+    }
+    private volatile int lastKey = -9; // 上一次按下命中的播控键（-1 没命中，-9 还没按过）
 
     /** 换了歌、等这首的封面认准了再翻面（见 syncMedia） */
     private static final class Pend { int dir; float at; int[] st; }
@@ -1204,18 +1225,29 @@ final class Scene implements GLSurfaceView.Renderer {
         G.mul(PS, P, S);
         float[] PM = new float[16];
         G.mul(PM, PS, pillM);
+        int nk = MS.heart != BydMedia.HIDE ? 4 : 3;
+        float[] xs = { -pillBx, 0, pillBx, pillHx };
         int best = -1;
         float bd = 1e9f;
-        float[] xs = { -pillBx, 0, pillBx, pillHx };
-        for (int k = 0; k < (MS.heart != BydMedia.HIDE ? 4 : 3); k++) {
+        for (int k = 0; k < nk; k++) {
             G.project(out, PM, xs[k], 0, iconsZ);
             float dx = (out[0] * 0.5f + 0.5f) * W - cxp, dy = (0.5f - out[1] * 0.5f) * H - cyp, dd = dx * dx + dy * dy;
             if (dd < bd) { bd = dd; best = k; }
         }
         G.project(out, PM, 0, 0, 0);
         float ppx = (out[0] * 0.5f + 0.5f) * W, ppy = (0.5f - out[1] * 0.5f) * H;
-        return Math.abs(cxp - ppx) < pillLw * pillF * 0.5f && Math.abs(cyp - ppy) < pillLh * pillF * 0.75f ? best : -1;
+        float pw = pillLw * pillF, ph = pillLh * pillF;
+        if (check(pw) && check(ph) && Math.abs(cxp - ppx) < pw * 0.5f && Math.abs(cyp - ppy) < ph * 0.75f) return best;
+        // 投影跑飞了（矩阵还没算好、控制条还没摆上去）：矩阵算出来的位置根本不在画面里 —— 这时不能信它，
+        // 退回「画面底部那条横带、横向三等分」直接判，保证播控在这种异常下也能点（表现为「怎么点都没反应」）
+        boolean off = !check(ppx) || !check(ppy) || ppx < -pw * 2 || ppx > W + pw * 2 || ppy < -ph * 2 || ppy > H + ph * 2;
+        if (off && cyp > H * 0.74f && cyp < H * 0.97f) {
+            float f = (cxp - W * 0.5f) / (W * 0.5f); // -1 左端、0 中间、1 右端
+            if (f > -0.9f && f < 0.9f) return f < -0.16f ? 0 : f < 0.16f ? 1 : 2;
+        }
+        return -1;
     }
+    private static boolean check(float v) { return !Float.isNaN(v) && !Float.isInfinite(v); }
 
     private void pillPress(int k, boolean down) { press[k].t = down ? 0.8f : 1; if (!down) press[k].v += 3; }
 
@@ -1429,7 +1461,7 @@ final class Scene implements GLSurfaceView.Renderer {
 
     private ShelfGrab sg;
 
-    private Grab grab;
+    private volatile Grab grab;
 
     private boolean onCover(float x, float y) { return Math.abs(x - cx) < C * 0.55f && Math.abs(y - cy) < C * 0.55f; }
 
@@ -1465,6 +1497,7 @@ final class Scene implements GLSurfaceView.Renderer {
             g.seek = seekHit(ex, ey);
             g.cover = !g.seek && onCover(lx, ly);
             g.key = g.seek ? -1 : pillHit(ex, ey);
+            lastKey = g.key;
             g.s0 = LY.scroll.x;
             g.ty0 = (fx - 0.5f) * 0.12f;
             grab = g;

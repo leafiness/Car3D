@@ -234,6 +234,9 @@ final class Ui extends FrameLayout {
             float a = show ? 0.72f : 0;
             v.animate().cancel();
             v.setEnabled(show);
+            // ★alpha=0 但还 clickable 的 View 照样会把这块的触摸吞掉（右上角点了没反应就是它）：
+            //   藏起来时连 clickable 一起关，触摸才漏得下去
+            v.setClickable(show);
             if (anim) v.animate().alpha(a).setDuration(500).start(); else v.setAlpha(a);
         }
         if (locDir != 0) { // 面板盖着时"正在放"先藏起来

@@ -222,11 +222,12 @@ final class Hud extends View {
 
     // ================= 画 =================
     @Override protected void onDraw(Canvas c) {
+        drawN++;
         if (pageIdx == 2) pushLg(); // 第三页：把当前媒体快照推给琉光 3D 场景
         // 第三页整个交给琉光：车况这一点东西都不画（顶栏、车况图标、车速、底部数据、页面提示全没有）。
         // 滑动切页时按 lgAlpha 淡出淡入，且在 GL 切换点（phase 1.5 / 2.5）正好淡到 0，不会有一层车况盖在琉光上
         float lgA = lgAlpha();
-        if (lgA <= 0.001f) return;
+        if (lgA <= 0.001f) { if (lgHost != null && LG_DBG) drawLgDbg(c); return; }
         int lgSave = lgA < 0.999f ? c.saveLayerAlpha(0, 0, W, H, Math.round(255 * lgA), Canvas.ALL_SAVE_FLAG) : -1;
         // 顶栏、车况图标、车速、下面那行字在两个页面都照常显示，浮在音乐整页背景之上
         // 底部车况数据固定不动；其余元素整体随 topShift 上移（drawStats 在平移之外单独绘制）
@@ -674,7 +675,33 @@ final class Hud extends View {
         invalidate();
     }
     int pageIndex() { return pageIdx; }
-    void setLgHost(com.x3card.car3d.lg.LgHost h) { lgHost = h; }
+    void setLgHost(com.x3card.car3d.lg.LgHost h) {
+        lgHost = h;
+        removeCallbacks(lgPump);
+        post(lgPump);
+    }
+    // 第三页的媒体快照泵：onDraw 走不到（或只在数据变化时才走到）时也能把快照推过去。
+    // LgHost 那边有 400ms 节流 + 内容判重，多推几次不会重画歌词
+    private final Runnable lgPump = new Runnable() {
+        @Override public void run() {
+            if (lgHost != null && pageIdx == 2) pushLg();
+            postDelayed(this, pageIdx == 2 ? 200 : 900);
+        }
+    };
+    // ================= 第三页自检字（定位「摸不到 / 命中不了 / 命令没发」；确认完就关掉） =================
+    private static final boolean LG_DBG = true;
+    private int drawN;
+    private void drawLgDbg(Canvas c) {
+        String s = "d" + drawN + " " + lgHost.diag();
+        p.setTypeface(Typeface.DEFAULT);
+        p.setTextSize(r(0.19f));
+        p.setTextAlign(Paint.Align.LEFT);
+        float w = p.measureText(s) + r(0.18f), h = r(0.32f), x0 = r(0.14f), y0 = r(0.12f);
+        p.setColor(0x99000000);
+        c.drawRoundRect(x0, y0, x0 + w, y0 + h, r(0.07f), r(0.07f), p);
+        p.setColor(0xffffffff);
+        c.drawText(s, x0 + r(0.09f), y0 + h * 0.72f, p);
+    }
     /** 把 car3d 已有的媒体快照桥接给琉光场景（不另开宿主会话） */
     // 推给琉光的歌词数组（Hud 每帧都推一份：没变就沿用同一个数组，不然 LgHost 每次都要逐行比一遍）
     private String[] lgLines;
@@ -694,7 +721,8 @@ final class Hud extends View {
                 for (int i = 0; i < lgTimes.length; i++) lgTimes[i] = lyrTimes.get(i);
             }
         }
-        lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, lgLines, lgTimes, lyrIdx, mDur, livePos(), coverBm);
+        int cur = lyrIdx < 0 && !lyrics.isEmpty() ? idxByPos() : lyrIdx; // 索引还没定下来时按播放位置兜一次
+        lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, lgLines, lgTimes, cur, mDur, livePos(), coverBm);
     }
     // 同级页面：连续页索引 page（不封顶，循环）；page mod 3：0=车况页、1=音乐页、2=琉光页。
     // 渲染用相位 phase=wrapPhase(page)∈[0,3)；音乐层偏移 cardOffPx=(1-phase)*W，ph=0 在右、1 就位、2 在左；
@@ -1681,7 +1709,10 @@ final class Hud extends View {
         int a = e.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             downX = x; downY = y;
-            boolean edge = y < r(0.4f) || x < r(1.0f) || x > W - r(1.0f);
+            // 切页热区：上沿一条，左右各一条。左右按窗口宽的比例算（最多 6%），
+            // 不然七分屏这种窄窗口里 1rem 会把琉光的播控条两端划进热区
+            float ex = Math.min(r(1.0f), W * 0.06f);
+            boolean edge = y < r(0.35f) || x < ex || x > W - ex;
             downOn = edge ? 20 : 30;
             if (edge) { if (offAnim != null) offAnim.cancel(); }
             else if (lgHost != null) lgHost.touch(0, x / dens, y / dens, e.getEventTime());
