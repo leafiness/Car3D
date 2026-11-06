@@ -143,6 +143,7 @@ abstract class Sheet extends FrameLayout {
     void show(boolean on) {
         if (on == open) return;
         open = on;
+        if (!on) dismissTip(); // 面板关上：说明浮窗一起收掉
         card.animate().cancel(); shade.animate().cancel();
         if (on) {
             setVisibility(VISIBLE);
@@ -401,23 +402,58 @@ abstract class Sheet extends FrameLayout {
         top.addView(info);
         l.addView(top);
         if (small != null && !small.isEmpty()) {
-            final TextView ex = new TextView(getContext());
-            ex.setText(small);
-            ex.setTextColor(SUB);
-            ex.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
-            ex.setLineSpacing(0, 1.4f);
-            ex.setPadding(0, px(0.08f), px(0.1f), 0);
-            ex.setVisibility(View.GONE);
-            l.addView(ex);
-            info.setOnClickListener(v -> {
-                boolean open = ex.getVisibility() != View.VISIBLE;
-                ex.setVisibility(open ? View.VISIBLE : View.GONE);
-                info.setOpen(open);
-            });
+            // 说明改成浮窗：点 ⓘ 弹出来，不再原地展开把下面的行顶下去
+            info.setOnClickListener(v -> showTip(l, info, small));
         } else {
             info.setVisibility(View.GONE);
         }
         return l;
+    }
+
+    /** 说明浮窗：点 ⓘ 弹在标题下方（下面放不下就翻到上面），点浮窗外、按返回键都关；同屏只留一个 */
+    private android.widget.PopupWindow tipPopup;
+
+    private void showTip(final View anchor, final InfoIcon icon, String text) {
+        if (tipPopup != null && tipPopup.isShowing()) { tipPopup.dismiss(); return; } // 再点一次同一个 ⓘ：收起来
+        LinearLayout box = new LinearLayout(getContext());
+        box.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(px(0.22f));
+        bg.setColor(light ? 0xfff7f8fa : 0xff2b3038);
+        bg.setStroke(Math.max(1, Math.round(dens)), light ? 0x1a000000 : 0x1fffffff);
+        box.setBackground(bg);
+        box.setPadding(px(0.24f), px(0.18f), px(0.24f), px(0.18f));
+        TextView t = new TextView(getContext());
+        t.setText(text);
+        t.setTextColor(TXT);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
+        t.setLineSpacing(0, 1.45f);
+        t.setMaxWidth(px(6.0f)); // 长说明自动换行，不铺满整屏
+        box.addView(t);
+        final android.widget.PopupWindow p = new android.widget.PopupWindow(box, -2, -2, true);
+        p.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000)); // 要在浮窗外点能关：必须有背景（透明即可）
+        p.setOutsideTouchable(true);
+        p.setFocusable(true); // 返回键也能关
+        p.setOnDismissListener(() -> { icon.setOpen(false); if (tipPopup == p) tipPopup = null; });
+        tipPopup = p;
+        icon.setOpen(true);
+        // 量一下浮窗大小，决定放下面还是翻到上面、左右别出画面
+        box.measure(View.MeasureSpec.makeMeasureSpec(px(6.0f) + px(0.5f), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int w = box.getMeasuredWidth(), h = box.getMeasuredHeight();
+        int[] loc = new int[2];
+        anchor.getLocationOnScreen(loc);
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        int x = loc[0];
+        if (x + w > sw - px(0.12f)) x = Math.max(px(0.12f), sw - px(0.12f) - w);
+        int y = loc[1] + anchor.getHeight() + px(0.06f);
+        if (y + h > sh - px(0.12f)) y = Math.max(px(0.12f), loc[1] - h - px(0.06f)); // 下面放不下：翻到上面
+        p.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
+    }
+
+    /** 面板关上时把说明浮窗一起收掉（不然它会悬在别处） */
+    void dismissTip() {
+        if (tipPopup != null && tipPopup.isShowing()) tipPopup.dismiss();
     }
     protected View actBtn(String text, boolean pri, Runnable on) {
         TextView b = new TextView(getContext());
