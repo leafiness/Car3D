@@ -26,14 +26,14 @@ final class RainPick {
     private int hits;
 
     /** 换歌了没有（换了要过 WAIT 再看一次） */
-    boolean newTrack(MediaState s, long now) {
+    boolean newTrack(MediaState.Snap s, long now) {
         String t = s.track == null ? "" : s.track;
         if (t.equals(track)) return false;
         track = t; on = null; at = now;
         return true;
     }
 
-    private int hits(MediaState s) {
+    private int hits(MediaState.Snap s) {
         String k = s.track + "|" + s.title + "|" + s.revLines;
         if (k.equals(key)) return hits;
         int n = count(s.title);
@@ -49,7 +49,7 @@ final class RainPick {
     }
 
     /** 这首歌下不下：true / false，还没定是 null */
-    private Boolean song(MediaState s, long now) {
+    private Boolean song(MediaState.Snap s, long now) {
         if (Boolean.TRUE.equals(on)) return true;
         if (hits(s) >= HITS) return on = true;
         if (!s.on || s.full || now - at >= WAIT) on = false;
@@ -57,7 +57,7 @@ final class RainPick {
     }
 
     /** 自动时下不下（sky：外面在不在下雨，查不到是 null）：true / false，还没定（这首歌词还没到）是 null——先保持原样 */
-    Boolean auto(MediaState s, long now, Boolean sky) {
+    Boolean auto(MediaState.Snap s, long now, Boolean sky) {
         Boolean so = song(s, now);
         if (Boolean.TRUE.equals(so) || Boolean.TRUE.equals(sky)) return true;
         return so == null ? null : false;

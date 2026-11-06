@@ -30,8 +30,8 @@ final class SetPage {
     // ================= 主线程交进来的 =================
     static final class Data {
         final Settings st;
-        final boolean fsBar, render; // 有没有"全屏时收起状态栏"（能全屏时才有）、"渲染方式"（车机有 Vulkan 时才有）
-        Data(Settings st, boolean fsBar, boolean render) { this.st = st; this.fsBar = fsBar; this.render = render; }
+        final boolean fsBar, render, aa; // 有没有"全屏时收起状态栏"（能全屏时才有）、"渲染方式"（车机有 Vulkan 时才有）、"抗锯齿"（画布是共享的、建了就改不了时没有）
+        Data(Settings st, boolean fsBar, boolean render, boolean aa) { this.st = st; this.fsBar = fsBar; this.render = render; this.aa = aa; }
     }
 
     private volatile Data in;
@@ -268,13 +268,13 @@ final class SetPage {
         Data d = in;
         if (d == null || d == data) return;
         data = d;
-        String av = d.fsBar + "|" + d.render;
+        String av = d.fsBar + "|" + d.render + "|" + d.aa;
         if (!av.equals(availSeen)) {
             availSeen = av;
             for (Row r : rows) {
                 List<Item> l = new ArrayList<>();
                 for (String k : r.keys) {
-                    if ("fsBar".equals(k) && !d.fsBar || "render".equals(k) && !d.render) continue;
+                    if ("fsBar".equals(k) && !d.fsBar || "render".equals(k) && !d.render || "aa".equals(k) && !d.aa) continue;
                     l.add(items.get(k));
                 }
                 r.items = l;

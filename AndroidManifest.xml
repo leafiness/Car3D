@@ -2,7 +2,7 @@
 <!-- 3D 车况（原生版）：车机 Android 10，宿主（com.wzw.bydmodule）的多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.ljone.car3d"
-    android:versionCode="670"
+    android:versionCode="671"
     android:versionName="0.8.0">
 
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 应用内安装更新包（Android 8+ 需要；车机会弹「未知来源」授权） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 蓝牙音乐的封面：手机传过来、车机存在 /storage 下的图，要读存储（第一次用到时问车主一次；同琉光） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <queries>
         <package android:name="com.wzw.bydmodule" />
     </queries>
@@ -22,6 +24,7 @@
         android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:resizeableActivity="true"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
         <activity

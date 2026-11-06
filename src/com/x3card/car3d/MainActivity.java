@@ -283,6 +283,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     }
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        // 琉光页蓝牙音乐的本地封面（读存储，LgHost 申请的）：给了就重新读
+        if (requestCode == 7 && lgHost != null && grantResults.length > 0) lgHost.storagePerm(grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED);
     }
     @Override public void onBackPressed() {
         // 更新弹窗：返回键也能关（只认返回键和「取消」按钮，点外面不关，避免误关装更新的确认框）
@@ -835,7 +837,13 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     }
 
     // ================= 车况数据（主线程）→ GL 线程 =================
-    @Override public void car(Map<String, Object> c) { final CarPage p = page; view.queueEvent(() -> p.setCar(c)); }
+    @Override public void car(Map<String, Object> c) {
+        final CarPage p = page; view.queueEvent(() -> p.setCar(c));
+        if (lgHost != null) { // 车机报的日夜模式：琉光「跟随车机」时用它（同原版订阅 display.dayNightMode）
+            Object dn = c.get("display.dayNightMode");
+            if (dn != null) lgHost.carNight("night".equals(dn));
+        }
+    }
     @Override public void sys(Map<String, Object> s) { final CarPage p = page; view.queueEvent(() -> p.setSys(s)); }
     @Override public void media(JSONObject m) { final CarPage p = page; view.queueEvent(() -> p.setMedia(m)); }
 }

@@ -586,7 +586,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, Scene.Hos
     // ================= 设置（场景里的 SetPage） =================
     private boolean prefsOn, fsAvail;
 
-    private SetPage.Data prefsData() { return new SetPage.Data(st.copy(), fsAvail, Vk.supported(this)); }
+    private SetPage.Data prefsData() { return new SetPage.Data(st.copy(), fsAvail, Vk.supported(this), true); }
 
     /** 现在的设置交给设置页（别处改了砖跟着翻过去） */
     private void pushPrefs() { view.scene().setPrefs(prefsData()); }
@@ -708,8 +708,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, Scene.Hos
     private void rainApply() {
         if (!booted) return;
         long now = SystemClock.uptimeMillis();
-        if (rp.newTrack(song, now)) { main.removeCallbacks(rainCheck); main.postDelayed(rainCheck, RainPick.WAIT + 100); } // 换歌：新歌的歌词等一会儿还没到就按已有的定
-        Boolean want = "on".equals(st.rain) ? Boolean.TRUE : "off".equals(st.rain) ? Boolean.FALSE : rp.auto(song, now, weather.rainingNow(System.currentTimeMillis()));
+        if (rp.newTrack(song.snap(), now)) { main.removeCallbacks(rainCheck); main.postDelayed(rainCheck, RainPick.WAIT + 100); } // 换歌：新歌的歌词等一会儿还没到就按已有的定
+        Boolean want = "on".equals(st.rain) ? Boolean.TRUE : "off".equals(st.rain) ? Boolean.FALSE : rp.auto(song.snap(), now, weather.rainingNow(System.currentTimeMillis()));
         if (want != null && want != rainNow) { rainNow = want; view.scene().setRain(want); }
     }
 

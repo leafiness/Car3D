@@ -722,7 +722,7 @@ final class Hud extends View {
         int byPos = curByPos();
         if (byPos >= 0) lyrIdx = byPos; // 音乐页那套也用这个索引，一起跟着位置走
         int cur = byPos >= 0 ? byPos : (lyrIdx >= 0 ? lyrIdx : 0);
-        lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, lgLines, lgTimes, cur, mDur, livePos(), coverBm);
+        lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, mPkg, lgLines, lgTimes, cur, mDur, livePos(), coverBm);
     }
     // 同级页面：连续页索引 page（不封顶，循环）；page mod 3：0=车况页、1=音乐页、2=琉光页。
     // 渲染用相位 phase=wrapPhase(page)∈[0,3)；音乐层偏移 cardOffPx=(1-phase)*W，ph=0 在右、1 就位、2 在左；
