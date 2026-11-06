@@ -271,14 +271,14 @@ final class Panel extends Sheet {
         swRow("aa", "抗锯齿", "车和字的边缘更平滑，更费显卡；切换后画面重建一次");
     }
 
-    /** 运行期从 PackageManager 读 versionName（格式 Vx.x.x），versionCode 单给小字用 */
+    /** 运行期从 PackageManager 读 versionName（测试包是「x.x.x 测试版」、正式包是「x.x.x」，直接显示），versionCode 单给小字用 */
     private String appVersion() {
         try {
             Context c = getContext();
             PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
             String v = pi.versionName;
             if (v == null || v.isEmpty()) v = "—";
-            return "V" + v + (Updater.isTestBuild(getContext()) ? "（测试版）" : "");
+            return "V" + v;
         } catch (Exception e) { return "V—"; }
     }
     /** 给颜色加透明度（同 Hud.withA） */

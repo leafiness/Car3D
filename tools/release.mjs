@@ -96,20 +96,19 @@ const SETTINGS_FILE = 'src/com/x3card/car3d/Settings.java';
 const MANIFEST_FILE = 'AndroidManifest.xml';
 const TEST_OFF = 'd.put("testBuild", false);';
 const TEST_ON = 'd.put("testBuild", true);';
-const CH_OFF = 'android:name="car3d.channel" android:value="official"';
-const CH_ON = 'android:name="car3d.channel" android:value="test"';
 
 // 测试通道：构建前把 testBuild 默认翻成 true（否则测试版 APK 覆盖安装后仍走正式通道），
-// 并把 manifest 里的通道标记改成 test（设置页按它标注「（测试版）」，看实际装的版本），构建完都还原
-let flipped = false, chanFlipped = false;
+// 并把全局版本名直接带上「测试版」字样（设置页、系统应用信息、更新弹窗全都自动跟着显示），构建完都还原
+let flipped = false, nameFlipped = false;
 if (TEST) {
   let s = read(SETTINGS_FILE);
   if (s.includes(TEST_OFF)) { s = s.replace(TEST_OFF, TEST_ON); write(SETTINGS_FILE, s); flipped = true; }
   else if (!s.includes(TEST_ON)) { console.error('✗ 找不到 Settings.java 里的 testBuild 默认值行'); process.exit(1); }
+  const vnOff = `android:versionName="${VER}"`, vnOn = `android:versionName="${VER} 测试版"`;
   let m = read(MANIFEST_FILE);
-  if (m.includes(CH_OFF)) { m = m.replace(CH_OFF, CH_ON); write(MANIFEST_FILE, m); chanFlipped = true; }
-  else if (!m.includes(CH_ON)) { console.error('✗ 找不到 AndroidManifest.xml 里的通道标记（car3d.channel）'); process.exit(1); }
-  console.log('· 测试通道：构建期已把 testBuild 默认翻为 true、通道标记改为 test');
+  if (m.includes(vnOff)) { m = m.replace(vnOff, vnOn); write(MANIFEST_FILE, m); nameFlipped = true; }
+  else if (!m.includes(vnOn)) { console.error('✗ 找不到 AndroidManifest.xml 里的 versionName（' + vnOff + '）'); process.exit(1); }
+  console.log('· 测试通道：构建期已把 testBuild 默认翻为 true、版本名改为「' + VER + ' 测试版」');
 }
 
 write('changelog.txt', changelogText);
@@ -133,13 +132,16 @@ try {
     let s = read(SETTINGS_FILE); s = s.replace(TEST_ON, TEST_OFF); write(SETTINGS_FILE, s); flipped = false;
     console.log('· 已还原 testBuild 默认为 false');
   }
-  if (chanFlipped) { // 还原通道标记为正式
-    let m = read(MANIFEST_FILE); m = m.replace(CH_ON, CH_OFF); write(MANIFEST_FILE, m); chanFlipped = false;
-    console.log('· 已还原通道标记为 official');
+  if (nameFlipped) { // 还原全局版本名（去掉「测试版」字样，避免污染下一次正式构建）
+    let m = read(MANIFEST_FILE);
+    m = m.replace(`android:versionName="${VER} 测试版"`, `android:versionName="${VER}"`);
+    write(MANIFEST_FILE, m); nameFlipped = false;
+    console.log('· 已还原版本名为 ' + VER);
   }
 }
 
-const apk = path.join(HERE, 'out', `3D车况 v${VER}.apk`);
+// 构建产物的文件名来自清单里的 versionName：测试构建时版本名带「测试版」，产物名也跟着带
+const apk = path.join(HERE, 'out', TEST ? `3D车况 v${VER} 测试版.apk` : `3D车况 v${VER}.apk`);
 if (!fs.existsSync(apk)) { console.error(`✗ 没找到构建产物：${apk}`); process.exit(1); }
 
 fs.mkdirSync(DEPLOY_DIR, { recursive: true });

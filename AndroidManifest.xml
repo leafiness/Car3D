@@ -2,7 +2,7 @@
 <!-- 3D 车况（原生版）：车机 Android 10，宿主（com.wzw.bydmodule）的多窗口 / 悬浮窗口把应用嵌进窗口里显示，所以要能随窗口改大小、不重建 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.ljone.car3d"
-    android:versionCode="676"
+    android:versionCode="677"
     android:versionName="0.8.0">
 
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="29" />
@@ -28,9 +28,6 @@
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
 
-        <!-- 通道标记：正式包 official；测试包由发版脚本在构建期改成 test。
-             设置页按它标注（测试版），看实际装的版本，与「测试版更新」开关无关 -->
-        <meta-data android:name="car3d.channel" android:value="official" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

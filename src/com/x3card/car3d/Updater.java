@@ -64,15 +64,6 @@ final class Updater {
     /** 缓存安装包（下载中 / 安装中都在这里，安装成功后再删） */
     static File cacheApk(Context c) { return new File(c.getCacheDir(), "update.apk"); }
 
-    /** 实际安装的这个包是不是测试版：看构建期打在 manifest 里的通道标记（car3d.channel），
-     *  与「测试版更新」开关无关——开关只决定收哪个通道的更新 */
-    static boolean isTestBuild(Context c) {
-        try {
-            android.content.pm.ApplicationInfo ai = c.getPackageManager().getApplicationInfo(c.getPackageName(), 0);
-            return ai.metaData != null && "test".equals(ai.metaData.getString("car3d.channel"));
-        } catch (Exception e) { return false; }
-    }
-
     interface CheckCb { void onLatest(); void onUpdate(String remoteName, String notes); void onError(String msg); }
     interface DownCb { void onProgress(int percent); void onDone(); void onError(String msg); }
 
