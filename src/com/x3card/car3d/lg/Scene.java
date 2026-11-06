@@ -632,8 +632,9 @@ final class Scene implements GLSurfaceView.Renderer {
             C = Math.min(H * 0.4f, W * 0.3f); water = -H * 0.21f;
             // 封面贴左边：左边距要同时容得下「屏宽的 8%」和「封面自己的余量」（玻璃砖是斜置的，
             // 还有极轻的呼吸摆动、左侧光晕）。超宽比不极端时（2:1 ～ 2.5:1）8% 屏宽会小于半个封面，
-            // 封面左下角就会切出画面（车机上就是这个现象），所以取两者的大值。
-            float cPad = Math.max(W * 0.08f, C * 0.64f);
+            // 封面左下角就会切出画面（车机上就是这个现象），所以取两者的大值；但方形窗口里 0.64C
+            // 能到两成屏宽，把整个构图顶得偏右（车机七分屏就是这个观感），按屏宽封个 12% 的上限。
+            float cPad = Math.max(W * 0.08f, Math.min(C * 0.64f, W * 0.12f));
             cx = -W / 2 + cPad + C / 2; cy = water + H * 0.035f + C / 2; ry = 0.42f;
             Fpx = H * 0.068f; maxW = W * 0.5f;
             px = W * 0.15f; py = H * 0.14f; R = H * 0.46f; yaw = (float) (-Math.PI / 6); center = true;
@@ -645,7 +646,9 @@ final class Scene implements GLSurfaceView.Renderer {
             //   而封面右缘在 -0.42W + 0.4H —— 窗口一窄两者必然叠上。这里按封面的实际右缘
             //   （玻璃砖斜置、有呼吸摆动，投影比 C 宽，按 0.62 留余量）重算歌词左界，放不下先收窄歌词。
             //   超宽屏（W/H ≥ 1.5）算出来比原值还靠左，px 取 max 后仍是原值，宽屏观感一点不变。
-            float lim1 = W / 2 - W * 0.04f;                                              // 画面右边留边
+            //   右边留边 12% 屏宽（原 4%）：方形窗口里歌词会一路铺到 96% 屏宽、贴着右缘；宽屏下
+            //   可用宽度比 0.5W 还宽、这个上限根本不起作用，超宽屏逐位不变。
+            float lim1 = W / 2 - W * 0.12f;                                              // 画面右边留边
             float left0 = Math.max(cx + C * 0.62f + W * 0.04f, -W / 2 + W * 0.04f);      // 歌词左缘下限
             float avail = lim1 - left0;
             if (avail < maxW) maxW = Math.max(W * 0.3f, avail);
