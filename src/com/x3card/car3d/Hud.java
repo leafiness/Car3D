@@ -1721,10 +1721,18 @@ final class Hud extends View {
         int a = e.getActionMasked();
         if (a == MotionEvent.ACTION_DOWN) {
             downX = x; downY = y;
+            // ★右上角是琉光自己的设置键 / 全屏键（画在 GL 场景里，见 TopKeys 的 layout：设置键圆心
+            //   (W-0.57rem, 0.55rem)、命中半径 0.37rem，全屏键在它左边一颗、竖排时在它下面一颗）。
+            //   这两颗的范围不算切页热区——否则按下被当成切页手势、GL 那边根本收不到，
+            //   表现就是「点设置键没反应、多点几下才中」（宽屏上齿轮整个落在右边的竖条里，全被吃掉）。
+            float rem = r(1f);
+            boolean nar = W / H < 0.8f;
+            boolean onKeys = nar ? (x > W - 1.05f * rem && y < 1.78f * rem)
+                                 : (x > W - 1.78f * rem && y < 1.0f * rem);
             // 切页热区：上沿一条，左右各一条。左右按窗口宽的比例算（最多 6%），
             // 不然七分屏这种窄窗口里 1rem 会把琉光的播控条两端划进热区
             float ex = Math.min(r(1.0f), W * 0.06f);
-            boolean edge = y < r(0.35f) || x < ex || x > W - ex;
+            boolean edge = !onKeys && (y < r(0.35f) || x < ex || x > W - ex);
             if (!edge) { downOn = -1; return false; } // 不接：穿透给 GLSurfaceView
             downOn = 20;
             if (offAnim != null) offAnim.cancel();

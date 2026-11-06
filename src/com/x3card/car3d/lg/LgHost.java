@@ -113,7 +113,11 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         ArtistPics.init(c);
         artists = new ArtistBook(prefs);
         bydMedia = new BydMedia(c, main, new BydMedia.Listener() {
-            @Override public void changed() { localArt(); pushSongs(); bookArtists(); noteOnline(); pushLib(); libCheck(); songCheck(); pushSnapCached(); }
+            @Override public void changed() {
+                localArt();
+                if (!onPage) { bookArtists(); noteOnline(); return; } // 不在第三页：只记账，别叫醒 GL（进页时推）
+                pushSongs(); bookArtists(); noteOnline(); pushLib(); libCheck(); songCheck(); pushSnapCached();
+            }
             @Override public void heartFailed() { toast("没收藏上，过一会儿再试"); }
             @Override public void modeFailed() { toast("播放模式没切过去，过一会儿再试"); }
             @Override public void position(long p, long at, float speed, boolean on) { } // 播放位置 car3d 的快照里有
@@ -187,6 +191,8 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     public void enter() {
         syncCss();
         onPage = true;
+        pushSnapNow();   // 离页期间媒体还在收：先把最新状态给场景（歌名、红心、音源、播放队列）
+        scene.setRain(rainNow); // 离页期间定下的雨珠一起补上
         // 上次在这个窗口大小上量出来的倍率（同琉光 Res.recall）：一开始就按不卡的尺寸画，别先卡几秒再降
         if (!resRecalled) {
             resRecalled = true;
@@ -196,7 +202,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         if (!booted) { booted = true; scene.boot(true); }
         else scene.setOpts(st);
         scene.keepAlive(true); // 停在这一页：极光这些一直在动的效果要接着跑
-        bydMedia.start();      // 媒体控制器：收藏、播放模式、音源、歌单都从这里来（同原版 onStart）
+        bydMedia.start();      // 媒体控制器：收藏、播放模式、音源、歌单都从这里来；连上就保持（同原版前台的口径），别在切页时反复绑/解绑
         pushSongs();
         bookArtists();
         pushLib();
@@ -211,7 +217,8 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         onPage = false;
         releaseRes(); // 画布倍率还给车况页
         scene.prefs(3); // 设置页收起来（GL 里画的，切页回来再开）
-        bydMedia.stop();
+        // 连着的媒体控制器不断开（同原版：应用前台就一直连）；切页那一下的绑定/解绑是主线程上的
+        // binder 往返，还会让红心、播放模式、音源在重进时先空一拍再闪出来
         weatherWatch(false);
         main.removeCallbacks(guideTry);
         if (ui != null && ui.guiding()) { ui.guideHide(); scene.guideTrack(Scene.GUIDE_OFF); } // 没看完就收起来了：没过的那几步不算看过，下次再出
@@ -705,7 +712,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         long now = SystemClock.uptimeMillis();
         if (rp.newTrack(s, now)) { main.removeCallbacks(rainCheck); main.postDelayed(rainCheck, RainPick.WAIT + 100); } // 换歌：新歌的歌词等一会儿还没到就按已有的定
         Boolean want = "on".equals(st.rain) ? Boolean.TRUE : "off".equals(st.rain) ? Boolean.FALSE : rp.auto(s, now, weather.rainingNow(System.currentTimeMillis()));
-        if (want != null && want != rainNow) { rainNow = want; scene.setRain(want); }
+        if (want != null && want != rainNow) { rainNow = want; if (onPage) scene.setRain(want); } // 离页只记账，进页时补上
     }
 
     /** 读一次车机天气（后台线程），读到了再定一次 */
@@ -883,7 +890,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         lDur = dur; lOn0 = on; lPlaying0 = playing; lastFull = full; lastPos = pos; lastPushAt = now;
 
         MediaState.Snap s = buildSnap(pos, now);
-        scene.setSnap(s);
+        if (onPage) scene.setSnap(s); // 不在第三页只记账不叫醒 GL（车况页在按需出帧，别为它多画一帧）
         rainApply(s);
     }
 
@@ -930,7 +937,10 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
 
     /** 控制器推来了新东西（收藏、播放模式、歌单、音源变了）：把缓存的那份快照重推一次，红心这些不用等下一拍媒体快照 */
     private void pushSnapCached() { main.post(this::pushSnapNow); }
-    private void pushSnapNow() { scene.setSnap(buildSnap(lastPos, SystemClock.elapsedRealtime())); }
+    private void pushSnapNow() {
+        if (!onPage) return; // 离页只记账；enter() 里会推最新的一份
+        scene.setSnap(buildSnap(lastPos, SystemClock.elapsedRealtime()));
+    }
 
     /** 宿主没给封面（蓝牙音乐、没内嵌封面的歌）时用琉光自己的占位封面，同原版 MediaState.makeCover。
      *  否则场景在换歌后一直认为「这首的封面还没到」（Scene.syncMedia 的 pend 分支），歌词会停在原处不动 */
