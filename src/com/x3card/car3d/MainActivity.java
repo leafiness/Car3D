@@ -287,6 +287,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override public void onBackPressed() {
         // 更新弹窗：返回键也能关（只认返回键和「取消」按钮，点外面不关，避免误关装更新的确认框）
         if (updateDlg != null && updateDlg.isShowing()) { updateDlg.dismiss(); return; }
+        if (lgHost != null && ui != null && ui.hud.lgAlpha() <= 0.001f && lgHost.back()) return; // 第三页：先关琉光的设置页
         if (achP.back()) return;
         if (ui.panelOpen()) ui.panel(false);
         else if (plateP.isOpen()) plateP.show(false);

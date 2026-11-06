@@ -14,10 +14,18 @@ import java.util.Collections;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
- * 把琉光整个搬进 car3d 的第三页：场景（Scene，GL），加上琉光自己的那层界面（Ui：右上角齿轮、全屏键、设置面板、提示）。
+ * 把琉光整个搬进 car3d 的第三页：场景（Scene，GL），加上琉光自己的那层界面（Ui：提示条、找歌手的"正在放"；
+ * 设置键、全屏键、设置页都画在场景里，见 TopKeys、SetPage）。
  * Stage 在第三页把整帧 GL 委托给这里；车况页仍走 CarPage。
  * 数据由 Hud 的媒体快照桥接成 MediaState.Snap，不另开宿主会话；播放控制交回 car3d 的媒体出口。
  * 第三页不显示任何车况的东西——car3d 那边把车况层整个藏掉，开关由 MainActivity 调。
+ *
+ * 和原版 liuguang 的差别（都是因为第三页是"借用"车况页那块画布）：
+ * ① 曲库、搜歌、键盘不接：车机这边没有宿主的多媒体曲库出口，host 的回调留空（曲库键不会开）；
+ * ② 收藏、播放模式不接：车机媒体控制器不给，快照里 heart=HIDE、mode=-1，红心和模式键不出现；
+ * ③ 跳进度、时间尺不接：车机不支持 seek，快照里 seek=false；
+ * ④ 抗锯齿、渲染方式改不了：画布是车况页那一块，改了等下次打开生效（同旧版）；
+ * ⑤ 停在第三页要持续出帧（极光、浮尘、水面按 clock 走），见 Scene.keepAlive。
  */
 public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     /** 交回 car3d 的（都在主线程上执行） */
@@ -33,7 +41,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private final float dens;
     private final Act act;
     private final Scene scene;
-    private final Settings st;
+    private Settings st;
     private final SongCovers covers;
     private final Handler main = new Handler(Looper.getMainLooper());
     private Ui ui;
@@ -41,6 +49,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private int lastW = -1, lastH = -1, rev;
     private float cssW = 1, cssH = 1, resK = 1;
     private boolean resRecalled;
+    private String fsMode = "";
 
     // 上一份快照（只在真的变了才递增 rev，Scene 按 rev 判断换歌 / 换歌词，每帧都变会导致歌词反复重建）
     private String lTrack = "", lTitle = "", lArtist = "";
@@ -64,6 +73,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         dens = density;
         act = a;
         st = Settings.load(c);
+        Res.sharp = "sharp".equals(st.clarity); // 设置里选了"清晰优先"：不缩画面（同原版 MainActivity）
         scene = new Scene(this, this, density);
         covers = new SongCovers(c);
         scene.setCovers(covers);
@@ -72,9 +82,12 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         scene.setDay(day);
         scene.setSongs(Collections.<BydMedia.Song>emptyList(), -1); // car3d 的宿主不给播放队列：歌单不出现
         applyRain();
+        pushPrefs();
     }
     /** 玻璃上的雨珠：设置开了才有。car3d 这边没接车机天气，「自动」当没有雨（下雨的事交给车机自己的界面） */
     private void applyRain() { scene.setRain("on".equals(st.rain)); }
+    /** 设置页的砖：car3d 没有"全屏时收起状态栏"（全屏是小窗/全屏页切换），也没有 Vulkan 画布 */
+    private void pushPrefs() { scene.setPrefs(new SetPage.Data(st.copy(), false, false)); }
 
     // ---------- Canvas3D ----------
     @Override public Scene scene() { return scene; }
@@ -116,17 +129,21 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     }
 
     // ---------- 琉光的界面（第三页叠在场景上，只有这里有） ----------
-    /** 第三页盖在场景上的那层（齿轮、全屏键、设置面板、提示）；第一次用时建 */
+    /** 第三页盖在场景上的那层（提示条、找歌手的"正在放"、新手引导）；第一次用时建 */
     public View uiView() {
         if (ui == null) {
-            ui = new Ui(ctx, st, this);
+            ui = new Ui(ctx, this);
             ui.setDay(day);
             ui.setWait(true);
+            ui.setFsMode(fsMode);
         }
         return ui;
     }
     /** 全屏键：full 在小窗口里、small 在全屏页里、空的不显示 */
-    public void setFsMode(String m) { if (ui != null) ui.setFsMode(m); }
+    public void setFsMode(String m) {
+        fsMode = m == null ? "" : m;
+        if (ui != null) ui.setFsMode(fsMode);
+    }
 
     /** 进第三页：第一次进来放开场动画 */
     public void enter() {
@@ -143,30 +160,47 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         scene.keepAlive(true); // 停在这一页：极光这些一直在动的效果要接着跑
         scene.wake();
     }
-    /** 离开第三页：设置面板收起来，别再持续出帧（GL 画布要还给车况页按需画） */
+    /** 离开第三页：设置页收起来，别再持续出帧（GL 画布要还给车况页按需画） */
     public void leavePage() {
         scene.keepAlive(false);
         onPage = false;
         releaseRes(); // 画布倍率还给车况页
-        if (ui != null) ui.closeAll();
+        scene.prefs(3); // 设置页收起来（GL 里画的，切页回来再开）
         // 手势可能在切页途中断掉（UP 没送到）：给场景补一个取消，别让它一直以为手指还按着，否则下次进页点播控会没反应
         final long t = SystemClock.uptimeMillis();
         glView.queueEvent(() -> scene.touch(3, 0, 0, t));
     }
 
     // ---------- Ui.Actions ----------
-    @Override public void set(String k, Object v) {
+    /** 歌单里"正在放"那块点了一下：回到正在放的那首 */
+    @Override public void locate() { scene.shelfLocate(); }
+    /** 右上角的键显不显示、全屏键是哪种（键画在场景里，见 TopKeys） */
+    @Override public void keys(boolean show, String fs) { scene.setKeys(show, fs == null ? "" : fs); }
+
+    // ---------- 设置 ----------
+    private volatile boolean prefsOpen; // 设置页开着（GL 线程回调，主线程读）
+
+    /** 系统返回键：第三页的设置页开着就先关它（同原版 MainActivity.onBackPressed） */
+    public boolean back() {
+        if (!prefsOpen) return false;
+        scene.prefs(3);
+        return true;
+    }
+
+    /** 设置页里点了一块（主线程） */
+    @Override public void prefSet(final String k, final Object v) { main.post(() -> applySetting(k, v)); }
+
+    private void applySetting(String k, Object v) {
         st.set(k, v);
         st.save(ctx);
         if ("theme".equals(k)) { day = wantDay(); scene.setDay(day); if (ui != null) ui.setDay(day); }
         if ("rain".equals(k)) applyRain();
-        scene.setOpts(st);
-        if (ui != null) ui.refresh();
+        if ("clarity".equals(k)) { Res.sharp = "sharp".equals(st.clarity); scene.wake(); }
         // 抗锯齿、渲染方式只能在建画布时定，car3d 的画布是车况页那一块：改了等下次打开生效
         if (("aa".equals(k) || "render".equals(k)) && act != null) act.toast("重新打开应用后生效");
+        scene.setOpts(st);
+        pushPrefs();
     }
-    @Override public void fullscreen() { if (act != null) act.fullscreen(); }
-    @Override public void locate() { scene.shelfLocate(); }
 
     private boolean wantDay() {
         if ("light".equals(st.theme)) return true;
@@ -185,12 +219,14 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     }
     /** 主线程：回到前台重新读一次设置（全屏页和小窗口共用一份） */
     public void reloadSettings() {
-        st.copyFrom(Settings.load(ctx));
+        st = Settings.load(ctx);
+        Res.sharp = "sharp".equals(st.clarity);
         scene.setOpts(st);
         applyRain();
         day = wantDay();
         scene.setDay(day);
-        if (ui != null) { ui.setDay(day); ui.refresh(); }
+        pushPrefs();
+        if (ui != null) ui.setDay(day);
     }
 
     // ---------- Scene.Host（GL 线程调：交回主线程） ----------
@@ -198,8 +234,10 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private volatile boolean pFlip;
     private volatile long pFlipAt;
     @Override public void press(String cmd) {
+        if ("settings".equals(cmd)) { scene.prefs(1); return; }    // 右上角的键（画在场景里）
+        if ("fullscreen".equals(cmd)) { if (act != null) main.post(act::fullscreen); return; }
+        if ("heart".equals(cmd) || "mode".equals(cmd)) return;      // 收藏、播放模式是车机媒体控制器的，car3d 这边不给
         if (act == null) return;
-        if ("heart".equals(cmd)) return; // 收藏是车机媒体控制器的，car3d 这边不给：红心不出现
         final String m = "toggle".equals(cmd) ? "togglePlayPause" : cmd;
         if ("toggle".equals(cmd)) { pFlip = !lPlaying0; pFlipAt = SystemClock.elapsedRealtime(); }
         main.post(() -> act.media(m));
@@ -209,7 +247,23 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     @Override public void playIndex(int i) { }
     @Override public void shelfState(final boolean open) { main.post(() -> { if (ui != null) ui.setShelfOn(open); }); }
     @Override public void locate(final int dir, final float y) { main.post(() -> { if (ui != null) ui.setLocate(dir, y); }); }
-    @Override public void coverAt(float l, float t, float r, float b) { } // 新手引导在 car3d 里不出
+    @Override public void guideAt(final float l, final float t, final float r, final float b) {
+        main.post(() -> { if (ui != null) ui.guideHole(l, t, r, b); }); // 新手引导在 car3d 里不出，留着不碍事
+    }
+    // 曲库（车机没有多媒体曲库出口）：整页不会打开，回调留空
+    @Override public void libPick(String method, String field, String value) { }
+    @Override public void libSource(int src) { }
+    @Override public void libraryState(final boolean open) { main.post(() -> { if (ui != null) ui.setLib(open); }); }
+    @Override public void songSearch(String query, int page, int seq) { }
+    @Override public void imeOpen() { }
+    @Override public void songPick(SongFinder.Hit hit) { }
+    @Override public void prefsState(final boolean open) {
+        main.post(() -> { prefsOpen = open; if (ui != null) ui.setPrefs(open); });
+    }
+    /** 封面的强调色：提示条跟着（同原版 MainActivity） */
+    @Override public void palette(final int accent, final int deep) {
+        main.post(() -> { if (ui != null) ui.setPalette(accent, deep); });
+    }
 
     // ---------- Stage 调用 ----------
     /** 第一次进第三页时补一次 surface 创建；之后每帧直接委托 */
@@ -285,6 +339,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         s.full = full; // 有整首歌词才滚整首；只有听到的句子时只显示当前句（同琉光 MediaState.full）
         s.rawPlaying = playing;
         s.canPlay = true;
+        s.seek = false;  // 车机不支持跳进度：歌词定位线上的时间尺、时间尺不出
         s.track = lTrack;
         s.title = lTitle;
         s.artist = lArtist;
@@ -297,7 +352,9 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         s.posAt = now;
         s.cover = cover != null ? cover : placeholder(ti, ar);
         s.coverTrack = s.track;
-        s.heart = BydMedia.HIDE;
+        s.heart = BydMedia.HIDE; // 车机不给收藏状态：红心不出现
+        s.mode = -1;             // 车机不给播放模式：模式键不出现
+        s.src = -1;              // 车机不给音源：歌名旁不挂音源图标
         s.revTrack = rTrack;
         s.revLines = rLines;
         s.revCover = rCover;
