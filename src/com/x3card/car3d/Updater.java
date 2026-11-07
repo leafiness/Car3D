@@ -68,7 +68,7 @@ final class Updater {
     /** 缓存安装包（下载中 / 安装中都在这里，安装成功后再删） */
     static File cacheApk(Context c) { return new File(c.getCacheDir(), "update.apk"); }
 
-    interface CheckCb { void onLatest(); void onUpdate(String remoteName, String notes); void onError(String msg); }
+    interface CheckCb { void onLatest(); void onUpdate(String remoteName, String notes, String published); void onError(String msg); }
     interface DownCb { void onProgress(int percent); void onDone(); void onError(String msg); }
 
     /** 拉远端版本，和本地 versionCode 比：远端更大=有更新；同时拉取更新日志（拉不到则为空，不阻断） */
@@ -78,13 +78,14 @@ final class Updater {
                 String txt = get(bust(testBuild(c) ? VER_TEST : VER_URL), 8000);
                 String[] lines = txt.split("\n");
                 String remoteName = lines.length >= 1 ? lines[0].trim() : "";
+                String published = lines.length >= 3 ? lines[2].trim() : ""; // 第三行：发版时间（老版本文件没有这一行）
                 int remote = -1;
                 if (lines.length >= 2) { try { remote = Integer.parseInt(lines[1].trim()); } catch (NumberFormatException ignored) { } }
                 int local = localCode(c);
                 // 日志要在工作线程拉：main() 里做网络会抛 NetworkOnMainThreadException（异常被吞掉就成了"没有日志"）
-                if (remote > local) { final String notes = fetchNotes(c); main(() -> cb.onUpdate(remoteName, notes)); }
+                if (remote > local) { final String notes = fetchNotes(c); main(() -> cb.onUpdate(remoteName, notes, published)); }
                 else if (remote < 0) { // 没拿到 code：退化比对版本名
-                    if (!remoteName.isEmpty() && !remoteName.equals(localName(c))) { final String notes = fetchNotes(c); main(() -> cb.onUpdate(remoteName, notes)); }
+                    if (!remoteName.isEmpty() && !remoteName.equals(localName(c))) { final String notes = fetchNotes(c); main(() -> cb.onUpdate(remoteName, notes, published)); }
                     else main(cb::onLatest);
                 } else main(cb::onLatest);
             } catch (Exception e) {

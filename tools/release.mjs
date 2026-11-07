@@ -27,6 +27,11 @@ const KEEP_VERSIONS = 999;
 
 const read = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
 const write = (p, s) => fs.writeFileSync(path.join(HERE, p), s, 'utf8');
+// 发版时间：写进版本文件第三行（下载页与 App 更新弹窗显示）
+const STAMP = (() => {
+  const d = new Date(), p2 = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+})();
 
 // ---------- 版本号：只在 AndroidManifest.xml 里写一处 ----------
 const manifest = read('AndroidManifest.xml');
@@ -158,7 +163,7 @@ if (TEST) {
   fs.mkdirSync(TEST_DIR, { recursive: true });
   for (const d of [DEPLOY_DIR, TEST_DIR]) {
     fs.copyFileSync(apk, path.join(d, 'latest_test.apk'));
-    fs.writeFileSync(path.join(d, 'version_test.txt'), `${VER} 测试版\n${CODE}\n`, 'utf8');
+    fs.writeFileSync(path.join(d, 'version_test.txt'), `${VER} 测试版\n${CODE}\n${STAMP}\n`, 'utf8');
     fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(d, 'changelog_test.txt'));
   }
   fs.copyFileSync(apk, path.join(TEST_DIR, namedApk));
@@ -167,13 +172,13 @@ if (TEST) {
     if (/^3D车况 v.*测试版.*\.apk$/.test(f)) fs.unlinkSync(path.join(DEPLOY_DIR, f));
   }
   console.log('\n✓ 测试通道暂存完成（根目录 + test/ 双写）：');
-  console.log('   version_test.txt = ' + VER + ' 测试版 / ' + CODE);
+  console.log('   version_test.txt = ' + VER + ' 测试版 / ' + CODE + ' / ' + STAMP);
   console.log('   latest_test.apk、changelog_test.txt 已更新（两处）');
   console.log('   ' + namedApk + ' 已放入 test/');
   console.log('   （正式通道 version.txt / latest.apk / changelog.txt 未改动）');
 } else {
   fs.copyFileSync(apk, path.join(DEPLOY_DIR, 'latest.apk'));
-  fs.writeFileSync(path.join(DEPLOY_DIR, 'version.txt'), `${VER}\n${CODE}\n`, 'utf8');
+  fs.writeFileSync(path.join(DEPLOY_DIR, 'version.txt'), `${VER}\n${CODE}\n${STAMP}\n`, 'utf8');
   fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(DEPLOY_DIR, 'changelog.txt'));
   // ★正式发版只动正式通道：测试通道（version_test.txt / latest_test.apk / changelog_test.txt）保持
   //   上一轮测试版不动。装测试版的车机把「测试版更新」关掉就走正式通道，正常收到正式版更新。
@@ -182,7 +187,7 @@ if (TEST) {
     if (/^3D车况 v.*\.apk$/.test(f) && f !== `3D车况 v${VER}.apk`) fs.unlinkSync(path.join(DEPLOY_DIR, f));
   }
   console.log('\n✓ 正式通道暂存完成：');
-  console.log('   version.txt = ' + VER + ' / ' + CODE);
+  console.log('   version.txt = ' + VER + ' / ' + CODE + ' / ' + STAMP);
   console.log('   latest.apk、changelog.txt 已更新');
 }
 console.log('部署目录内容：');

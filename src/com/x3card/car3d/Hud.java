@@ -99,16 +99,14 @@ final class Hud extends View {
     private final Handler clockH = new Handler(Looper.getMainLooper());
     private final Runnable clockRun = this::clockTick;
     private void clockTick() {
-        syncLyrIdx(); // 歌词句跟着播放位置走，不等宿主下一次推送
+        // ★索引只在 setMedia（收到宿主快照 / 位置校正）里改，时钟只负责重绘 —— 与 681 及之前的实现一致。
+        //   曾经在这里每 200ms 也同步一次索引，结果和 setMedia 形成两条时间线：一边按宿主推的句子定位、
+        //   一边按播放位置算，两边差一句就互相覆盖，表现就是歌词高频前后跳。
         invalidate();
         clockH.postDelayed(clockRun, (musicOn && playing) ? 200 : 1000);
     }
 
-    /**
-     * 把当前句对齐到播放位置。以前只在 setMedia（收到宿主快照）里做，
-     * 宿主推送一稀疏（换句推送停、或只在一秒一次的快照里带位置），歌词就跟着慢半拍。
-     * 时钟本来就按 5Hz 跑，顺手对齐一次，不给界面增加额外重绘。
-     */
+    /** 按播放位置对齐当前句（只在 setMedia / ctlPos 这些"收到权威数据"的时机调用） */
     private void syncLyrIdx() {
         if (!playing || lyrics.isEmpty()) return;
         int bp = curByPos();
@@ -209,10 +207,6 @@ final class Hud extends View {
     private List<Long> lyrTimes = new ArrayList<>();           // 与 lyrics 平行：每句在整首里的开始时间（宿主没给是 -1）
     private final List<String> liveLyrics = new ArrayList<>(); // 宿主只给逐句快照时累积的歌词行（换歌清空）
     private int lyrIdx = -1;      // 当前句是第几句（持久状态，照琉光 lyr.idx：不再每帧从 0 重扫，重复句按顺序递进）
-    // 歌词滚动（Apple Music 风格）：位移走指数逼近，换句时柔和滑动而不是瞬移；滚动期间 clockTick 临时提到 30 帧
-    private float lyrShift;       // 当前绘制用的位移（px）
-    private long lyrShiftAt;      // 上一帧时间（算 dt）
-    private boolean lyrShiftSet;  // 已有基准位移（首帧/换歌直接就位，不从 0 滑上来）
     private Paint lyrMaskPaint;   // 上下边缘渐隐遮罩的画笔（复用）
     private Shader lyrMaskShader; // 遮罩渐变（按视口尺寸缓存，避免每帧 new）
     private float lyrMaskKey;     // 遮罩缓存的尺寸键
@@ -580,7 +574,7 @@ final class Hud extends View {
         if (!msg.isEmpty()) {
             pillR.set(x0, bottom - pillH, x0 + pillW, bottom);
             pillOn = clickable;
-            if (clickable) { sp.setColor(chip); c.drawRoundRect(pillR, r(0.3f), r(0.3f), sp); sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(Math.max(1, dens)); sp.setColor(withA(ink, 0.55f)); c.drawRoundRect(pillR, r(0.3f), r(0.3f), sp); sp.setStyle(Paint.Style.FILL); }
+            if (clickable) { sp.setColor(chip); c.drawRoundRect(pillR, r(0.3f), r(0.3f), sp); } // 只留底色，不描边
             float dx = x0 + r(0.22f) + r(0.06f);
             int col = lvColor(topLv);
             sp.setColor(withA(col, 0.18f)); c.drawCircle(dx, rowCy, r(0.06f) + r(0.05f), sp);
@@ -597,7 +591,6 @@ final class Hud extends View {
         }
         allR.set(x0 + pillW + r(0.12f), rowCy - allH / 2, x0 + pillW + r(0.12f) + allW, rowCy + allH / 2);
         sp.setColor(chip); c.drawRoundRect(allR, r(0.3f), r(0.3f), sp);
-        sp.setStyle(Paint.Style.STROKE); sp.setStrokeWidth(Math.max(1, dens)); sp.setColor(withA(ink, 0.55f)); c.drawRoundRect(allR, r(0.3f), r(0.3f), sp); sp.setStyle(Paint.Style.FILL);
         p.setTypeface(ui500); p.setTextSize(r(0.2f)); p.setColor(ink);
         c.drawText("全部车况 ›", allR.left + r(0.16f), baseline(rowCy, p), p);
         if (stOpen && L.size() > 1) { // 展开的列表：在那行字上面
@@ -836,7 +829,7 @@ final class Hud extends View {
                 //   以前每来一条就把锚点拉到它身上，进度每次都被往回拽一截 —— 进度条和歌词持续慢半拍（「歌词延迟」）。
                 //   在死区内相信墙钟（mPos + 经过时间），它才是连续的。播放中途的 0 视为没给有效数字，忽略。
                 long mine = livePos();
-                if (!posSet || Math.abs(newPos - mine) > 1200) { mPos = newPos; mRecv = now; posSet = true; posTrust = true; }
+                if (!posSet || Math.abs(newPos - mine) > 2000) { mPos = newPos; mRecv = now; posSet = true; posTrust = true; }
             } else if (newPlaying && !wasPlaying) {
                 // 暂停→播放：锚点位置不变，只把锚点时间对齐到现在，从冻结处继续走
                 mRecv = now;
@@ -856,8 +849,13 @@ final class Hud extends View {
         }
         if (!lyrStale.isEmpty() && !mLyric.equals(lyrStale)) lyrStale = ""; // 歌词变了：上一首那句过去了
         if (!mLyric.isEmpty() && !mLyric.equals(lyrStale)) {
-            if (!mLyric.equals(lyrLine)) setLine(mLyric); // 换句了：按「从上一句往后找」重新定位（重复句按顺序递进，不再跳回第一次出现的位置）
-            else chainRepeat();                            // 推来的还是同一句：可能是连着两句一模一样，按时间自己往下走
+            // ★「第几句」只留一个真相：有整首歌词带每句时间时只认播放位置，宿主推来的句子只记文本。
+            //   以前两套一起写（推送定位 + 位置兜底），两边差一句时就每 200ms 互相覆盖 —— 表现正是歌词前后跳、抖。
+            boolean byPos = curByPos() >= 0;
+            if (!mLyric.equals(lyrLine)) {
+                lyrLine = mLyric;
+                if (!byPos) setLine(mLyric); // 没有时间轴：只能按宿主推的句子走
+            } else if (!byPos) chainRepeat(); // 连着两句一样、又没有时间轴：按时间自己往下走
         }
         playing = newPlaying;
         syncLyrIdx(); // 有每句时间：当前句跟播放位置走（宿主换句推送一停，只靠推送到不了就定格在第一句）
@@ -885,10 +883,16 @@ final class Hud extends View {
         }
         if (!lyrics.isEmpty()) {
             liveLyrics.clear();                                 // 有整首歌词就不需要快照累积了
-            lyrIdx = -1;                                        // 索引按新列表重来
-            String cur = !lyrLine.isEmpty() ? lyrLine : mLyric;  // 用当前这句在新列表里重新定位（琉光 loadLyrics 回调同款）
-            if (cur != null && !cur.isEmpty()) setLine(cur);
-            if (lyrIdx < 0) lyrIdx = idxByPos();                 // 定位不到：按播放位置兜底
+            String cur = !lyrLine.isEmpty() ? lyrLine : mLyric;  // 当前这句（换歌后重新定位用）
+            int byPos = curByPos();                              // ★有时间轴：直接按播放位置定，不用宿主推的那句
+            if (byPos >= 0) {
+                lyrIdx = byPos;
+                if (cur != null && !cur.isEmpty()) lyrLine = cur;
+            } else {
+                lyrIdx = -1;                                     // 索引按新列表重来
+                if (cur != null && !cur.isEmpty()) setLine(cur);  // 没有时间轴：按句子在新列表里定位
+                if (lyrIdx < 0) lyrIdx = idxByPos();              // 定位不到：按播放位置兜底
+            }
         }
         invalidate();
     }
@@ -979,7 +983,14 @@ final class Hud extends View {
             if (at <= p) k = i;
         }
         if (prev <= 0) return -1;      // 一句有效时间都没有
-        return Math.max(0, k);
+        int r = Math.max(0, k);
+        // ★不回退：位置在句界附近抖一下（采样误差、校正余量）不要让当前句往回跳。
+        //   只有明显跳回（拖进度，>2 秒）才允许退回去。
+        if (lyrIdx > r && lyrIdx < n) {
+            long st = lyrTimes.get(lyrIdx);
+            if (st >= 0 && p > st - 2000) r = lyrIdx;
+        }
+        return r;
     }
     private long livePos() { if (!posSet) return 0; if (playing && mDur > 0) return Math.min(mPos + (System.currentTimeMillis() - mRecv), mDur); return mPos; }
 
@@ -995,11 +1006,12 @@ final class Hud extends View {
         if (real < 0) return;
         if (mDur > 0) real = Math.min(real, mDur);
         long mine = livePos();
-        if (posSet && posTrust && Math.abs(real - mine) < 1500) return; // 死区：墙钟更准，别来回拽
+        // ★信任过位置之后只认「离谱」的偏差（>5 秒）：车机推的是它几百毫秒前的采样，
+        //   1~2 秒的偏差反复校正只会把进度条来回拽 —— 歌词跟着前后跳。墙钟一小时也漂不到 5 秒。
+        if (posSet && posTrust && Math.abs(real - mine) < 5000) return;
         mPos = real; mRecv = System.currentTimeMillis(); posSet = true; posTrust = true;
         mPosReported = -1; // 下一条快照的 positionMs 仍有机会校正（同样受死区保护）
-        syncLyrIdx();
-        invalidate();
+        invalidate();      // 索引等紧随其后的快照来更新，这里不再单独写（防止两条时间线）
     }
     private static String fmtTime(long ms) {
         long s = Math.max(0, ms) / 1000, m = s / 60, ss = s % 60;
@@ -1293,26 +1305,12 @@ final class Hud extends View {
         if (phys.isEmpty()) return;
         int curPhys = (cur >= 0 && cur < list.size()) ? firstPhys[cur] : phys.size() / 2;
 
-        // 整列平移：当前句落在第 above 个槽；钳制保证开头贴顶、结尾贴底，窗口恒有 rows 行
+        // 整列平移：当前句落在第 above 个槽；钳制保证开头贴顶、结尾贴底，窗口恒有 rows 行。
+        // ★位移不做动画（与 0.8.0 一致）：这套是全屏 Canvas，每帧要重画背景/封面/歌词，
+        //   自己排 33ms 帧会和时钟的 200ms 重绘交错，实际帧间隔 33~200ms 乱跳 —— 动画忽快忽慢，看着就是抖。
         int above = (rows - 1) / 2;
-        float target = (above - curPhys) * slot;
-        target = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, target));
-        // ★柔和滚动（指数逼近，时间常数约 95ms）：换句时滑上去而不是瞬移，这是 Apple Music 观感的一半。
-        //   首帧 / 换歌 / 行槽尺寸大变时直接就位，免得从 0 滑一大段。
-        long nowMs = System.currentTimeMillis();
-        if (!lyrShiftSet || Math.abs(target - lyrShift) > viewH * 1.2f) {
-            lyrShift = target;
-        } else {
-            long dt = lyrShiftAt > 0 ? Math.min(90L, nowMs - lyrShiftAt) : 16L;
-            if (dt > 0) {
-                float k = 1f - (float) Math.exp(-dt / 95.0);
-                lyrShift += (target - lyrShift) * k;
-                if (Math.abs(target - lyrShift) < 0.4f) lyrShift = target;
-            }
-        }
-        lyrShiftAt = nowMs;
-        lyrShiftSet = true;
-        float shift = lyrShift;
+        float shift = (above - curPhys) * slot;
+        shift = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, shift));
 
         // 当前句已唱比例：整首歌词带时间戳时按「本句起点 → 下一句起点」线性推进；拿不到就整句强调色
         float sung = -1f;
@@ -1389,8 +1387,6 @@ final class Hud extends View {
         }
         c.restoreToCount(clip);
         p.setTextAlign(Paint.Align.LEFT);
-        // 还在滑动：自己排下一帧（约 30 帧）。不能等 clockTick 的 200ms 节拍——那样动画还没开始就结束了。
-        if (Math.abs(target - lyrShift) > 0.5f) postInvalidateDelayed(33);
     }
     /** 封面位图（CarUi 后台加载好给过来）；没有时画占位音符。同时预生成「缩糊位图」与「最亮/最暗两极色」，供跟随封面背景用 */
     void setCover(android.graphics.Bitmap b) {

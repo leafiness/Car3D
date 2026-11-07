@@ -262,9 +262,9 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             if (!started) return;
             Updater.check(this, new Updater.CheckCb() {
                 @Override public void onLatest() { }
-                @Override public void onUpdate(String remoteName, String notes) {
+                @Override public void onUpdate(String remoteName, String notes, String published) {
                     ui.toast("发现新版本 V" + remoteName + "，点击可更新", 4000);
-                    showUpdateDialog(remoteName, notes);
+                    showUpdateDialog(remoteName, notes, published);
                 }
                 @Override public void onError(String msg) { } // 网络不通就当没这回事，别弹错误
             });
@@ -411,13 +411,13 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         ui.toast("正在检查更新…", 1500);
         Updater.check(this, new Updater.CheckCb() {
             @Override public void onLatest() { ui.toast("已是最新版本", 2200); }
-            @Override public void onUpdate(String remoteName, String notes) { showUpdateDialog(remoteName, notes); }
+            @Override public void onUpdate(String remoteName, String notes, String published) { showUpdateDialog(remoteName, notes, published); }
             @Override public void onError(String msg) { ui.toast(msg, 3500); }
         });
     }
     private AlertDialog updateDlg;
     /** 发现新版本：圆角弹窗（和设置页卡片同款圆角），左取消 / 右更新，显示更新日志；点更新后显示下载进度；下完先自动弹一次安装界面，未装返回后可用「安装」按钮手动再装 */
-    private void showUpdateDialog(String remoteName, String notes) {
+    private void showUpdateDialog(String remoteName, String notes, String published) {
         if (updateDlg != null && updateDlg.isShowing()) return;
         // 圆角卡片背景（和设置页卡片一致：160° 深色渐变 + 细描边 + 0.32rem 圆角）
         GradientDrawable cardBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xf5262a34, 0xf70f1116});
@@ -439,6 +439,14 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         msg.setText("当前 V" + Updater.localName(this) + " → 新版本 V" + remoteName + "\n是否现在更新？");
         msg.setTextColor(0xffeef1f6); msg.setTextSize(16);
         content.addView(msg);
+
+        if (published != null && !published.isEmpty()) { // 发版时间（版本文件第三行）
+            TextView when = new TextView(this);
+            when.setText("发布时间 " + published);
+            when.setTextColor(0x88aab4c4); when.setTextSize(12);
+            when.setPadding(0, dp(4), 0, 0);
+            content.addView(when);
+        }
 
         // 更新日志（有内容才显示）：只显示更新版本自己的那一段，不再带历史版本；
         // 段落头换成弹窗里的版本名——测试通道的版本名带「测试版」字样（v0.8.0 测试版），正式通道就是 v0.8.0
