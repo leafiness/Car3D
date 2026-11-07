@@ -438,6 +438,13 @@ abstract class Sheet extends FrameLayout {
     private void showTip(final View anchor, final InfoIcon icon, String text) {
         if (tipPopup != null && tipPopup.isShowing()) { tipPopup.dismiss(); return; } // 再点一次同一个 ⓘ：收起来
         final int pad = px(0.24f);
+        final int edge = px(0.12f);
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        // ★浮窗最宽 = 设置页宽度：横屏让长说明能铺开，竖屏也不会顶出设置页。
+        //   扣掉浮窗自己的左右内边距后才是文字上限；再留屏幕安全边。card 还没 layout 时退回原来的 6rem 上限。
+        int sheetW = card.getWidth();
+        int maxTextW = Math.min(sheetW > 0 ? sheetW - pad * 2 : px(6.0f), sw - edge * 2 - pad * 2);
+        maxTextW = Math.max(px(1.6f), maxTextW);
         LinearLayout box = new LinearLayout(getContext());
         box.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable bg = new GradientDrawable();
@@ -451,15 +458,15 @@ abstract class Sheet extends FrameLayout {
         t.setTextColor(TXT);
         t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
         t.setLineSpacing(0, 1.45f);
-        t.setMaxWidth(px(6.0f)); // 长说明自动换行，不铺满整屏
+        t.setMaxWidth(maxTextW); // 长说明自动换行，最宽不超过设置页
         // 说明可能是一整版更新日志：限高 + 可滚动，否则浮窗会顶出画面
-        final int maxBody = Math.round(getResources().getDisplayMetrics().heightPixels * 0.46f);
+        final int maxBody = Math.round(sh * 0.46f);
         android.widget.ScrollView sv = new android.widget.ScrollView(getContext());
         sv.setVerticalScrollBarEnabled(false);
         sv.addView(t, new android.widget.FrameLayout.LayoutParams(-2, -2));
         box.addView(sv);
         // 先量卡片，再按「图标在画面上的位置」定浮窗和尖角：浮窗中心尽量对住 ⓘ，尖角指回图标
-        int wSpec = View.MeasureSpec.makeMeasureSpec(px(6.0f) + pad * 2, View.MeasureSpec.AT_MOST);
+        int wSpec = View.MeasureSpec.makeMeasureSpec(maxTextW + pad * 2, View.MeasureSpec.AT_MOST);
         int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
         box.measure(wSpec, hSpec);
         int cardW = box.getMeasuredWidth(), cardH = box.getMeasuredHeight();
@@ -471,12 +478,20 @@ abstract class Sheet extends FrameLayout {
         int triW = px(0.34f), triH = px(0.16f);
         int[] loc = new int[2];
         anchor.getLocationOnScreen(loc);
-        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
         int iconCx = loc[0] + anchor.getWidth() / 2;
         int gap = px(0.05f);
-        boolean below = loc[1] + anchor.getHeight() + gap + triH + cardH <= sh - px(0.12f); // 下面放得下就放下面
+        boolean below = loc[1] + anchor.getHeight() + gap + triH + cardH <= sh - edge; // 下面放得下就放下面
         int x = iconCx - cardW / 2;
-        x = Math.max(px(0.12f), Math.min(x, sw - px(0.12f) - cardW)); // 左右别出画面
+        x = Math.max(edge, Math.min(x, sw - edge - cardW)); // 左右别出画面
+        // 浮窗最宽已和设置页一致：横向也夹在设置页内，别飘到车模或其它页面上（尖角仍指回 ⓘ）
+        int[] cl = new int[2];
+        card.getLocationOnScreen(cl);
+        int inset = px(0.08f);
+        int left = cl[0] + inset, right = cl[0] + card.getWidth() - inset - cardW;
+        if (card.getWidth() > 0) {
+            if (right >= left) x = Math.max(left, Math.min(x, right));
+            else x = cl[0] + Math.max(0, (card.getWidth() - cardW) / 2); // 已接近面板满宽：在面板内居中
+        }
         int y = below ? loc[1] + anchor.getHeight() + gap : loc[1] - gap - cardH - triH;
         // 尖角尖对着图标，横向跟着浮窗位置走（被画面边缘夹过之后仍然指得准）
         int tipX = Math.max(px(0.3f), Math.min(iconCx - x, cardW - px(0.3f)));
