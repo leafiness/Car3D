@@ -452,11 +452,22 @@ abstract class Sheet extends FrameLayout {
         t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(0.2f));
         t.setLineSpacing(0, 1.45f);
         t.setMaxWidth(px(6.0f)); // 长说明自动换行，不铺满整屏
-        box.addView(t);
+        // 说明可能是一整版更新日志：限高 + 可滚动，否则浮窗会顶出画面
+        final int maxBody = Math.round(getResources().getDisplayMetrics().heightPixels * 0.46f);
+        android.widget.ScrollView sv = new android.widget.ScrollView(getContext());
+        sv.setVerticalScrollBarEnabled(false);
+        sv.addView(t, new android.widget.FrameLayout.LayoutParams(-2, -2));
+        box.addView(sv);
         // 先量卡片，再按「图标在画面上的位置」定浮窗和尖角：浮窗中心尽量对住 ⓘ，尖角指回图标
-        box.measure(View.MeasureSpec.makeMeasureSpec(px(6.0f) + pad * 2, View.MeasureSpec.AT_MOST),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int wSpec = View.MeasureSpec.makeMeasureSpec(px(6.0f) + pad * 2, View.MeasureSpec.AT_MOST);
+        int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+        box.measure(wSpec, hSpec);
         int cardW = box.getMeasuredWidth(), cardH = box.getMeasuredHeight();
+        if (cardH > maxBody) { // 太长：滚动区固定到上限高度（其余照常算位置）
+            sv.getLayoutParams().height = Math.max(px(1.2f), maxBody - px(0.18f) * 2);
+            box.measure(wSpec, hSpec);
+            cardW = box.getMeasuredWidth(); cardH = box.getMeasuredHeight();
+        }
         int triW = px(0.34f), triH = px(0.16f);
         int[] loc = new int[2];
         anchor.getLocationOnScreen(loc);

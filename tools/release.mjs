@@ -130,6 +130,16 @@ for (const k of ['ANDROID_BUILD_TOOLS', 'ANDROID_JAR', 'JAVA_HOME']) {
   if (!fs.existsSync(env[k])) { console.error(`✗ 找不到 ${k}：${env[k]}`); process.exit(1); }
 }
 
+// ---------- 包内资料：设置页「当前版本」的说明浮窗离线也能看到本版更新 ----------
+{
+  const assets = path.join(HERE, 'assets');
+  fs.mkdirSync(assets, { recursive: true });
+  fs.writeFileSync(path.join(assets, 'build_info.txt'),
+    `${VER}\n${CODE}\n${STAMP}\n${TEST ? '测试通道' : '正式版'}\n`, 'utf8');
+  fs.copyFileSync(path.join(HERE, 'changelog.txt'), path.join(assets, 'changelog.txt'));
+  console.log(`· 包内资料已写入 assets（build_info + changelog，${STAMP}）`);
+}
+
 try {
   execFileSync('node', ['build.mjs'], { cwd: HERE, stdio: 'inherit', env });
 } finally {

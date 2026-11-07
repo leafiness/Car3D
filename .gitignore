@@ -1,3 +1,7 @@
 build/
 out/
 release.keystore
+
+# 发版时生成的包内资料（设置页「当前版本」说明读它）
+assets/build_info.txt
+assets/changelog.txt

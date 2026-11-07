@@ -201,7 +201,7 @@ final class Panel extends Sheet {
         }
         group("关于");
         r = row(true);
-        r.addView(label("当前版本", appVersion(), "点一下检查更新", acc()));
+        r.addView(label("当前版本", appVersion(), versionNote(), acc()));
         r.setClickable(true);
         r.setOnClickListener(v -> act.act("checkUpdate"));
         swRow("testBuild", "测试版更新", "打开后接收测试版更新；关掉只收正式版（测试版也会跟着正式版一起更新）");
@@ -283,6 +283,48 @@ final class Panel extends Sheet {
             if (v == null || v.isEmpty()) v = "—";
             return "V" + v;
         } catch (Exception e) { return "V—"; }
+    }
+
+    /** 「当前版本」的说明浮窗：构建信息 + 本版更新日志（发版时打进 assets，离线也能看） */
+    private String versionNote() {
+        StringBuilder sb = new StringBuilder();
+        String info = asset("build_info.txt");
+        if (!info.isEmpty()) {
+            String[] L = info.split("\n");
+            if (L.length >= 3 && !L[2].trim().isEmpty()) sb.append("构建于 ").append(L[2].trim());
+            if (L.length >= 4 && !L[3].trim().isEmpty()) {
+                if (sb.length() > 0) sb.append(" · ");
+                sb.append(L[3].trim());
+            }
+        }
+        String notes = asset("changelog.txt");
+        if (!notes.isEmpty()) {
+            String cur = Updater.splitNotes(notes, Updater.localName(getContext()))[0];
+            if (!cur.isEmpty()) {
+                if (sb.length() > 0) sb.append("\n\n");
+                sb.append(cur);
+            }
+        }
+        if (sb.length() == 0) return "点一下检查更新";
+        sb.append("\n\n点这一行检查更新");
+        return sb.toString();
+    }
+
+    /** 读包内文本（assets）；读不到返回空串 */
+    private String asset(String name) {
+        java.io.InputStream in = null;
+        try {
+            in = getContext().getAssets().open(name);
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[8192];
+            int n;
+            while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            return new String(bo.toByteArray(), "UTF-8");
+        } catch (Exception e) {
+            return "";
+        } finally {
+            try { if (in != null) in.close(); } catch (Exception ignored) { }
+        }
     }
     /** 给颜色加透明度（同 Hud.withA） */
     private static int withAlpha(int c, float a) { return (Math.round((c >>> 24) * a) << 24) | (c & 0xffffff); }
