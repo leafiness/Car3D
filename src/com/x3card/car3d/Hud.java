@@ -1377,9 +1377,11 @@ final class Hud extends View {
             float key = viewY * 7919f + viewH;
             if (lyrMaskShader == null || Math.abs(lyrMaskKey - key) > 0.5f) {
                 lyrMaskKey = key;
+                // ★DST_OUT 是「按源的 alpha 挖掉目标」：所以边缘要**不透明**（挖掉）、中间要**全透明**（保留）。
+                //   反过来写（中间不透明）会把整片歌词擦掉 —— 只剩边缘一圈，看着就是"歌词不见了"。
                 lyrMaskShader = new LinearGradient(0, viewY, 0, viewY + viewH,
-                    new int[] { 0x00000000, 0xCC000000, 0xFF000000, 0xFF000000, 0xCC000000, 0x00000000 },
-                    new float[] { 0f, 0.10f, 0.30f, 0.70f, 0.90f, 1f }, Shader.TileMode.CLAMP);
+                    new int[] { 0xFF000000, 0x00000000, 0x00000000, 0xFF000000 },
+                    new float[] { 0f, 0.14f, 0.86f, 1f }, Shader.TileMode.CLAMP);
             }
             lyrMaskPaint.setShader(lyrMaskShader);
             c.drawRect(x, viewY, x + w, viewY + viewH, lyrMaskPaint);
