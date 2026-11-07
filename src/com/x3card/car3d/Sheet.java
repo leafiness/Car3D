@@ -439,9 +439,16 @@ abstract class Sheet extends FrameLayout {
         if (tipPopup != null && tipPopup.isShowing()) { tipPopup.dismiss(); return; } // 再点一次同一个 ⓘ：收起来
         final int pad = px(0.24f);
         final int edge = px(0.12f);
-        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        // ★按「应用窗口可见区域」而不是整块屏幕定位：车机分屏/七分屏下窗口不占满屏幕，
+        //   用全屏尺寸算出的位置会被 PopupWindow 裁剪平移，尖角跟着整体偏出 ⓘ
+        final android.graphics.Rect win = new android.graphics.Rect();
+        getWindowVisibleDisplayFrame(win);
+        if (win.width() <= 0 || win.height() <= 0) {
+            win.set(0, 0, getResources().getDisplayMetrics().widthPixels, getResources().getDisplayMetrics().heightPixels);
+        }
+        int sw = win.width(), sh = win.height();
         // ★浮窗最宽 = 设置页宽度：横屏让长说明能铺开，竖屏也不会顶出设置页。
-        //   扣掉浮窗自己的左右内边距后才是文字上限；再留屏幕安全边。card 还没 layout 时退回原来的 6rem 上限。
+        //   扣掉浮窗自己的左右内边距后才是文字上限；再留窗口安全边。card 还没 layout 时退回原来的 6rem 上限。
         int sheetW = card.getWidth();
         int maxTextW = Math.min(sheetW > 0 ? sheetW - pad * 2 : px(6.0f), sw - edge * 2 - pad * 2);
         maxTextW = Math.max(px(1.6f), maxTextW);
@@ -480,10 +487,11 @@ abstract class Sheet extends FrameLayout {
         anchor.getLocationOnScreen(loc);
         int iconCx = loc[0] + anchor.getWidth() / 2;
         int gap = px(0.05f);
-        boolean below = loc[1] + anchor.getHeight() + gap + triH + cardH <= sh - edge; // 下面放得下就放下面
+        boolean below = loc[1] + anchor.getHeight() + gap + triH + cardH <= win.bottom - edge; // 下面放得下就放下面
+        if (!below && loc[1] - gap - cardH - triH < win.top + edge) below = true; // 上方也放不下：仍放下面
         int x = iconCx - cardW / 2;
-        x = Math.max(edge, Math.min(x, sw - edge - cardW)); // 左右别出画面
-        // 浮窗最宽已和设置页一致：横向也夹在设置页内，别飘到车模或其它页面上（尖角仍指回 ⓘ）
+        x = Math.max(win.left + edge, Math.min(x, win.right - edge - cardW)); // 左右别出窗口
+        // 浮窗最宽已和设置页一致：横向也夹在设置页内，别飘到车模或其它页面上
         int[] cl = new int[2];
         card.getLocationOnScreen(cl);
         int inset = px(0.08f);
@@ -493,8 +501,13 @@ abstract class Sheet extends FrameLayout {
             else x = cl[0] + Math.max(0, (card.getWidth() - cardW) / 2); // 已接近面板满宽：在面板内居中
         }
         int y = below ? loc[1] + anchor.getHeight() + gap : loc[1] - gap - cardH - triH;
-        // 尖角尖对着图标，横向跟着浮窗位置走（被画面边缘夹过之后仍然指得准）
-        int tipX = Math.max(px(0.3f), Math.min(iconCx - x, cardW - px(0.3f)));
+        // ★尖角优先：夹完边界后若 ⓘ 落到浮窗外，把浮窗拉回来（宽度不变，允许略微越出设置页），
+        //   边距只留三角半宽，不再用 0.3rem 把尖角顶离图标
+        final int minTip = Math.min(triW / 2 + Math.max(2, Math.round(dens)), cardW / 2);
+        if (x > iconCx - minTip) x = iconCx - minTip;
+        if (x < iconCx - cardW + minTip) x = iconCx - cardW + minTip;
+        x = Math.max(win.left + edge, Math.min(x, win.right - edge - cardW));
+        int tipX = Math.max(minTip, Math.min(iconCx - x, cardW - minTip));
         LinearLayout outer = new LinearLayout(getContext());
         outer.setOrientation(LinearLayout.VERTICAL);
         Tri tri = new Tri(getContext(), below);
@@ -507,9 +520,13 @@ abstract class Sheet extends FrameLayout {
         p.setOutsideTouchable(true);
         p.setFocusable(true); // 返回键也能关
         p.setOnDismissListener(() -> { icon.setOpen(false); if (tipPopup == p) tipPopup = null; });
+        // 位置已夹在窗口内，别让系统再裁剪平移一次（那会把尖角整体带离 ⓘ）
+        p.setClippingEnabled(false);
         tipPopup = p;
         icon.setOpen(true);
-        p.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
+        // ★用相对 ⓘ 的偏移定位：分屏/状态栏造成的窗口偏移由系统按 anchor 真实位置换算，
+        //   不再把屏幕绝对坐标直接交给 showAtLocation
+        p.showAsDropDown(anchor, x - loc[0], y - (loc[1] + anchor.getHeight()));
     }
 
     /** 面板关上时把说明浮窗一起收掉（不然它会悬在别处） */
