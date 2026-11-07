@@ -54,6 +54,8 @@ abstract class Sheet extends FrameLayout {
     public interface DarkK { float get(); }
     protected DarkK darkKProvider;
     protected boolean light;
+    /** 固定深色：设置页用。不随「深浅色」设置和车机日夜变化（浮层始终深色，观感稳定） */
+    protected boolean forceDark;
     protected int TXT, SUB, MUTE, CARD_TOP, CARD_BOT, CARD_BORDER, GROUP_BG, GROUP_BORDER,
                  GROUP_TITLE, LINE, INFO, ICON, SEG_BG, SEG_OFF_TXT, SEG_ON_TXT, SEG_ON_BG, SW_OFF, TRACK_OFF,
                  CHIP_BG, CHIP_TXT, BTN_BORDER, BTN_OFF_BG, CHEV_STROKE, CHEV_FILL;
@@ -63,7 +65,9 @@ abstract class Sheet extends FrameLayout {
     void applyTheme() {
         String t = S.str("theme");
         boolean lt;
-        if ("light".equals(t)) lt = true;
+        // 设置页固定深色：不管「深浅色」选了什么、车机当前是日间还是夜间，都不再跟着变
+        if (forceDark) lt = false;
+        else if ("light".equals(t)) lt = true;
         else if ("dark".equals(t)) lt = false;
         else { float k = darkKProvider != null ? darkKProvider.get() : 1f; lt = k < 0.5f; }
         light = lt;

@@ -54,6 +54,9 @@ final class Panel extends Sheet {
     Panel(Context c, Settings s, Act act) {
         super(c, s, "设置", true);
         this.act = act;
+        forceDark = true; // 设置页固定深色，不跟「深浅色」和车机日夜切换（see Sheet.applyTheme）
+        applyTheme();
+        card.invalidate(); // 卡片底色是自绘的，配色重算后要重绘
     }
     @Override protected void closed() { page = "main"; act.closed(); }
     void setFs(boolean on) { fsRow = on; if (open) rows(); }
