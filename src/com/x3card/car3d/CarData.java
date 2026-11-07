@@ -281,7 +281,7 @@ final class CarData {
      *  要在工作线程走 openCover 拿只读文件描述符解码；读取设 8MB 上限、用完关描述符 */
     void loadCover(String url, CoverCb cb) {
         if (url == null || url.isEmpty()) { main.post(() -> cb.on(null, 0)); return; }
-        new Thread(() -> {
+        Workers.io(() -> {
             android.graphics.Bitmap b = null;
             long h = 0;
             android.os.ParcelFileDescriptor pfd = null;
@@ -302,7 +302,7 @@ final class CarData {
             final android.graphics.Bitmap bm = b;
             final long fh = h;
             main.post(() -> cb.on(bm, fh));
-        }, "cover").start();
+        });
     }
 
     /** 封面内容指纹：照琉光音乐的做法，CRC32 + 长度，用来判断"换歌后取到的还是不是上一首那张" */

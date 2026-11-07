@@ -223,7 +223,7 @@ final class Hud extends View {
 
     // ================= 画 =================
     @Override protected void onDraw(Canvas c) {
-        if (pageIdx == 2) pushLg(); // 第三页：把当前媒体快照推给琉光 3D 场景
+        if (pageIdx == 2) bridge.pushNow(); // 停在第三页：数据一到就推一次（泵仍在跑，管兜底）
         // 第三页整个交给琉光：车况这一点东西都不画（顶栏、车况图标、车速、底部数据、页面提示全没有）。
         // 滑动切页时按 lgAlpha 淡出淡入，且在 GL 切换点（phase 1.5 / 2.5）正好淡到 0，不会有一层车况盖在琉光上
         float lgA = lgAlpha();
@@ -679,51 +679,36 @@ final class Hud extends View {
     boolean hasLyrics() { return !lyrics.isEmpty(); }
     void setLgHost(com.x3card.car3d.lg.LgHost h) {
         lgHost = h;
-        removeCallbacks(lgPump);
-        post(lgPump);
+        bridge.attach(h); // 快照泵、按页调度、订阅停摆补问都在 MediaBridge 里（Hud 只管提供数据，见下面的 Src）
     }
-    // 第三页的媒体快照泵：onDraw 走不到（或只在数据变化时才走到）时也能把快照推过去。
-    // LgHost 那边有 400ms 节流 + 内容判重，多推几次不会重画歌词
-    private Runnable mediaPoll;               // 主动问一次媒体（订阅推送不可靠时的兜底）
-    private long lastMediaAt = SystemClock.elapsedRealtime();
     void setMediaPoll(Runnable r) { mediaPoll = r; }
-    private final Runnable lgPump = new Runnable() {
-        @Override public void run() {
-            if (lgHost != null && pageIdx == 2) {
-                pushLg();
-                // 订阅推送停了也照样有数据：两秒半没收到快照就主动问一次（否则歌名、进度、播放态会永远停在那一份）
-                if (mediaPoll != null && SystemClock.elapsedRealtime() - lastMediaAt > 2500) { lastMediaAt = SystemClock.elapsedRealtime(); mediaPoll.run(); }
-            }
-            postDelayed(this, pageIdx == 2 ? 200 : 900);
+    private Runnable mediaPoll; // 主动问一次媒体（订阅推送不可靠时的兜底）
+
+    /** 媒体快照桥：歌词数组、调度、补问都交给它；Hud 这边只交数据 */
+    private final MediaBridge bridge = new MediaBridge(new MediaBridge.Src() {
+        @Override public boolean on() { return mHadMedia; }
+        @Override public boolean playing() { return playing; }
+        @Override public boolean full() { return !lyrics.isEmpty(); }
+        @Override public String title() { return mTitle; }
+        @Override public String artist() { return mArtist; }
+        @Override public String track() { return mTrackId; }
+        @Override public String pkg() { return mPkg; }
+        @Override public List<String> lines() { return lyrics.isEmpty() ? liveLyrics : lyrics; }
+        @Override public List<Long> times() { return lyrTimes; }
+        @Override public int cur() {
+            // ★当前句以「播放位置」为准：有整首歌词带每句时间时，位置是唯一真相（同琉光 MediaState.anchor）。
+            //   只靠宿主的逐句推送到不了就整首定格在第一句——车机换句推送一旦停了，歌词就永远不滚。
+            int byPos = curByPos();
+            if (byPos >= 0) lyrIdx = byPos; // 音乐页那套也用这个索引，一起跟着位置走
+            return byPos >= 0 ? byPos : (lyrIdx >= 0 ? lyrIdx : 0);
         }
-    };
-    // ================= 推送给琉光 =================
-    /** 把 car3d 已有的媒体快照桥接给琉光场景（不另开宿主会话） */
-    // 推给琉光的歌词数组（Hud 每帧都推一份：没变就沿用同一个数组，不然 LgHost 每次都要逐行比一遍）
-    private String[] lgLines;
-    private long[] lgTimes;
-    private List<String> lgSrc;
-    private int lgN = -1;
-    private void pushLg() {
-        if (lgHost == null) return;
-        List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics;
-        if (all != lgSrc || all.size() != lgN) {
-            lgSrc = all;
-            lgN = all.size();
-            lgLines = all.toArray(new String[0]);
-            lgTimes = null;
-            if (!lyrics.isEmpty() && lyrTimes.size() == lyrics.size()) {
-                lgTimes = new long[lyrTimes.size()];
-                for (int i = 0; i < lgTimes.length; i++) lgTimes[i] = lyrTimes.get(i);
-            }
-        }
-        // ★当前句以「播放位置」为准：有整首歌词带每句时间时，位置是唯一真相（同琉光 MediaState.anchor）。
-        //   只靠宿主的逐句推送到不了就整首定格在第一句——车机换句推送一旦停了，歌词就永远不滚。
-        int byPos = curByPos();
-        if (byPos >= 0) lyrIdx = byPos; // 音乐页那套也用这个索引，一起跟着位置走
-        int cur = byPos >= 0 ? byPos : (lyrIdx >= 0 ? lyrIdx : 0);
-        lgHost.media(mHadMedia, playing, !lyrics.isEmpty(), mTitle, mArtist, mTrackId, mPkg, lgLines, lgTimes, cur, mDur, livePos(), coverBm);
-    }
+        @Override public long dur() { return mDur; }
+        @Override public long pos() { return livePos(); }
+        @Override public Bitmap cover() { return coverBm; }
+        @Override public int page() { return pageIdx; }
+        @Override public void pollMedia() { if (mediaPoll != null) mediaPoll.run(); }
+    });
+
     // 同级页面：连续页索引 page（不封顶，循环）；page mod 3：0=车况页、1=音乐页、2=琉光页。
     // 渲染用相位 phase=wrapPhase(page)∈[0,3)；音乐层偏移 cardOffPx=(1-phase)*W，ph=0 在右、1 就位、2 在左；
     // 淡入 k=1-|ph-1| 天然让 ph=2 时音乐层完全淡出，第三页交给 Stage 委托的琉光 3D 场景。
@@ -797,7 +782,7 @@ final class Hud extends View {
             playing = false; mTrackId = ""; mPosReported = -1; lyrStale = ""; invalidate(); return;
         }
         mHadMedia = true;
-        if (m != null) lastMediaAt = SystemClock.elapsedRealtime();
+        if (m != null) bridge.seen(); // 收到新快照：补问的计时归零
         String prevLyric = mLyric; // 换歌前那句（下面 trackChanged 时记为「上一首残留的那句」）
         mTitle = m.optString("title", ""); mArtist = m.optString("artist", "");
         mLyric = lyricText(m.optString("lyric", "")); mCover = m.optString("coverUrl", "");

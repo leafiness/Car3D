@@ -73,7 +73,7 @@ final class Updater {
 
     /** 拉远端版本，和本地 versionCode 比：远端更大=有更新；同时拉取更新日志（拉不到则为空，不阻断） */
     static void check(final Context c, final CheckCb cb) {
-        new Thread(() -> {
+        Workers.net(() -> {
             try {
                 String txt = get(bust(testBuild(c) ? VER_TEST : VER_URL), 8000);
                 String[] lines = txt.split("\n");
@@ -90,7 +90,7 @@ final class Updater {
             } catch (Exception e) {
                 main(() -> cb.onError("检查更新失败：" + e.getMessage()));
             }
-        }, "upd-check").start();
+        });
     }
 
     /** 拉远端更新日志文本（纯文本，多行）；失败返回空串。必须在工作线程调用（主线程做网络会被系统抛异常） */
@@ -143,7 +143,7 @@ final class Updater {
     static void downloadAndInstall(final Activity a, final DownCb cb) {
         File out = cacheApk(a);
         try { File p = out.getParentFile(); if (p != null) p.mkdirs(); } catch (Exception ignored) { }
-        new Thread(() -> {
+        Workers.net(() -> {
             try {
                 HttpURLConnection h = (HttpURLConnection) new URL(bust(testBuild(a) ? APK_TEST : APK_URL)).openConnection();
                 h.setConnectTimeout(10000); h.setReadTimeout(30000);
@@ -169,7 +169,7 @@ final class Updater {
             } catch (Exception e) {
                 main(() -> cb.onError("下载失败：" + e.getMessage()));
             }
-        }, "upd-dl").start();
+        });
     }
 
     /** 用缓存里的 update.apk 触发安装（下载完成后由弹窗「安装」按钮调用） */

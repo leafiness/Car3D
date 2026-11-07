@@ -72,7 +72,7 @@ final class Scene implements GLSurfaceView.Renderer {
 
     Scene(Canvas3D view, Host host, float density) {
         this.view = view;
-        this.vkView = view instanceof VkSceneView;
+        this.vkView = false; // car3d 只有 GL 画布（Vulkan 那套连画布一起没搬进来，见 lg 包的删除说明）
         this.host = host;
         this.dens = density;
         this.DPR = Math.min(density, 1.5f);
@@ -596,6 +596,7 @@ final class Scene implements GLSurfaceView.Renderer {
     public void onSurfaceChanged(GL10 gl, int width, int height) {
         bw = Math.max(1, width);
         bh = Math.max(1, height);
+        reflFresh = false; reflForce = true; // 画布尺寸变了：倒影贴图作废，下一帧重画
         if (view.cssW() > 0) DPR = bw / view.cssW();
         resHold = SystemClock.uptimeMillis() + (resJust ? 1500 : 4000); // 刚换画布（开场、拖分屏、换倍数）：先不量
         resJust = false;
@@ -1727,6 +1728,7 @@ final class Scene implements GLSurfaceView.Renderer {
 
     /** 手势（GL 线程里）：a 0 按下 / 1 移动 / 2 抬起 / 3 取消；nx、ny 是在画布上的比例（0～1）——画布不一定按密度缩（嵌在多窗口里时系统不缩），按比例换算最稳 */
     void touch(int a, float nx, float ny, long tms) {
+        lastTouch = SystemClock.uptimeMillis(); // 有手的动作：从静止回到 60 帧
         float ex = nx * W, ey = ny * H;
         if (keys.touch(a, ex, ey)) return; // 按在右上角的键上
         float lx = ex - W / 2, ly = H / 2 - ey, fx = ex / W, fy = ey / H;
@@ -1894,6 +1896,7 @@ final class Scene implements GLSurfaceView.Renderer {
     private final Rain rain = new Rain();
 
     private volatile boolean bootWanted, bootIntro = true, fpsReset;
+    private boolean bootTextPending; // 首进第三页：歌名/歌词贴图留到下一帧建
     private boolean btnHeld = true;
 
     private void btnWait(boolean w) { if (w != btnHeld) { btnHeld = w; host.btnWait(w); } }
@@ -1911,7 +1914,7 @@ final class Scene implements GLSurfaceView.Renderer {
         layout();
         DAY.set(dayWanted ? 1 : 0);
         rainToggle = true;
-        if (stIntro && bootIntro) { titleSong(false); introStart("intro"); } else { lyricsSong(0, false); titleSong(false); btnWait(false); }
+        bootTextPending = true; // ★首进分摊：歌名/歌词的贴图下一帧再建（先出封面和背景，少顿一下）
         wake();
     }
 
@@ -1919,7 +1922,9 @@ final class Scene implements GLSurfaceView.Renderer {
     public void onDrawFrame(GL10 gl) {
         long t = SystemClock.uptimeMillis();
         if (t0 < 0) t0 = t;
-        if (lastT != 0 && (fps == 30 || rainOnly) && t - lastT < 30) { try { Thread.sleep(33 - (t - lastT)); } catch (InterruptedException ignored) { } t = SystemClock.uptimeMillis(); }
+        // 暂停、3 秒没人碰：第三页的极光/浮尘 30 帧完全够（省电、降发热）；一碰或一播放立刻回 60
+        boolean idleLow = alive && ready && !introFull() && MS != null && !MS.playing && SystemClock.uptimeMillis() - lastTouch > 3000;
+        if (lastT != 0 && (fps == 30 || rainOnly || idleLow) && t - lastT < 30) { try { Thread.sleep(33 - (t - lastT)); } catch (InterruptedException ignored) { } t = SystemClock.uptimeMillis(); }
         float dt = lastT != 0 ? Math.min(0.05f, (t - lastT) / 1000f) : 1 / 60f;
         // 帧率：设置里定了 60 / 30 就按设置；自动时画不过来降 30，过一阵再试 60，又没成就隔得更久再试（最长 5 分钟）。画中画窗口里连空场景都到不了稳定的 60
         if (fpsReset) { fpsReset = false; fps = "30".equals(fpsMode) ? 30 : 60; gapAvg = 16.7f; retryGap = 20000; retryAt = t + retryGap; }
@@ -1935,6 +1940,10 @@ final class Scene implements GLSurfaceView.Renderer {
         G.screen(bw, bh);
         if (!ready && bootWanted && W > 1) doBoot();
         if (!ready || pal == null) { G.clear(true, false); lastT = 0; return; }
+        if (bootTextPending) { // ★第二帧：建歌名/歌词贴图、放开场（intro）或放键
+            bootTextPending = false;
+            if (stIntro && bootIntro) { titleSong(false); introStart("intro"); } else { lyricsSong(0, false); titleSong(false); btnWait(false); }
+        }
         boolean moving0 = false;
         String wf = wantFont;
         if (!wf.equals(fontNow)) { // 换了字体：歌词、歌名重画（同网页版 retext）
@@ -2018,6 +2027,11 @@ final class Scene implements GLSurfaceView.Renderer {
     // ================= 水面：真的平面倒影（同网页版：镜像一台相机，斜裁剪面，只画照进水里的那些） =================
     private final float[] waterM = new float[16], texM = new float[16], Vr = new float[16], Pr = new float[16];
     private boolean waterOk;
+    // ★倒影节流：倒影要每帧把整个场景镜像重画一遍（半分辨率），改成两帧一刷；
+    //   曲库/设置页/歌单把画面盖住时干脆不画，关掉后强制补一帧（否则水面会挂着很旧的倒影）
+    private long lastTouch; // 最后一次触摸（第三页静止时降到 30 帧）
+    private int reflTick;
+    private boolean reflFresh, reflForce, reflPagesWas;
 
     // 每帧要用的小数组都先建好（不在画的时候新建，免得一直产生垃圾）
     private final float[] wLocal = new float[16], wWP = new float[3], wN = new float[3], wVW = new float[3], wTG = new float[3], wUP = new float[3],
@@ -2065,12 +2079,18 @@ final class Scene implements GLSurfaceView.Renderer {
         float sc = 2 / (CL[0] * Q4[0] + CL[1] * Q4[1] + CL[2] * Q4[2] + CL[3] * Q4[3]);
         for (int i = 0; i < 4; i++) CL[i] *= sc;
         e[2] = CL[0]; e[6] = CL[1]; e[10] = CL[2] + 1; e[14] = CL[3];
-        waterFbo.bind();
-        G.clearColor(0, 0, 0, 1);
-        G.depthMask(true); // 能写深度才清得掉（上一帧画透明的东西时关了）
-        G.clear(true, true);
-        drawScene(Vr, Pr, true, waterFbo.w, waterFbo.h, ribK, waterK, 0);
-        waterFbo.resolve();
+        boolean pgk = pages();
+        if (reflPagesWas && !pgk) reflForce = true; // 整页层刚关掉：这一帧必须重画倒影
+        reflPagesWas = pgk;
+        if (reflForce || !reflFresh || (!pgk && (reflTick++ & 1) == 0)) {
+            reflForce = false; reflFresh = true;
+            waterFbo.bind();
+            G.clearColor(0, 0, 0, 1);
+            G.depthMask(true); // 能写深度才清得掉（上一帧画透明的东西时关了）
+            G.clear(true, true);
+            drawScene(Vr, Pr, true, waterFbo.w, waterFbo.h, ribK, waterK, 0);
+            waterFbo.resolve();
+        }
     }
 
     private static float dot(float[] a, float[] b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }

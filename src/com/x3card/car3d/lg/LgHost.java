@@ -14,6 +14,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
 
+import com.ljone.car3d.Workers;
+
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -266,7 +268,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         if ("theme".equals(k)) { day = wantDay(); scene.setDay(day); if (ui != null) ui.setDay(day); }
         if ("rain".equals(k)) { weatherWatch(onPage && "auto".equals(st.rain)); rainClock(); }
         if ("clarity".equals(k)) { Res.sharp = "sharp".equals(st.clarity); scene.wake(); }
-        if ("font".equals(k)) { final String f = st.font; new Thread(() -> { Txt.load(ctx, f); main.post(() -> scene.setOpts(st)); }, "lg-font").start(); } // 后台读好再换
+        if ("font".equals(k)) { final String f = st.font; Workers.io(() -> { Txt.load(ctx, f); main.post(() -> scene.setOpts(st)); }); } // 后台读好再换
         // 抗锯齿、渲染方式只能在建画布时定，car3d 的画布是车况页那一块：设置页里这两行已经藏了，值不会变
         scene.setOpts(st);
         pushPrefs();
@@ -312,7 +314,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         for (String k : new String[] { "font", "fps", "water", "art", "ribbons", "rain", "intro", "reveal" }) {
             if (!n.get(k).equals(o.get(k))) {
                 if ("rain".equals(k)) { applyRain(); weatherWatch(onPage && "auto".equals(st.rain)); rainClock(); }
-                else if ("font".equals(k)) { final String f = st.font; new Thread(() -> { Txt.load(ctx, f); main.post(() -> scene.setOpts(st)); }, "lg-font").start(); }
+                else if ("font".equals(k)) { final String f = st.font; Workers.io(() -> { Txt.load(ctx, f); main.post(() -> scene.setOpts(st)); }); }
                 else scene.setOpts(st);
             }
         }
@@ -482,7 +484,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         main.postDelayed(libTimeout, libSame ? 4000 : 9000); // 点的还是上次那块、队列也没变：多半正在放的就是它，等得短一点
         final int req = ++libReq;
         final android.content.Context app = ctx.getApplicationContext();
-        new Thread(() -> { // 发之前、发之后问「多媒体」在不在前台：3 秒内跑到前台多半是没登录、弹出了登录页（留着让人登录），不再等新歌单
+        Workers.net(() -> { // 发之前、发之后问「多媒体」在不在前台：3 秒内跑到前台多半是没登录、弹出了登录页（留着让人登录），不再等新歌单
             int before = Player.foreground(app);
             if (!Player.voice(app, method, p)) { main.post(() -> libFailed(req, "这台车机没有「多媒体」，换不了")); return; }
             if (before != 0) return;
@@ -490,7 +492,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
                 try { Thread.sleep(400); } catch (InterruptedException e) { return; }
                 if (Player.foreground(app) == 1) { main.post(() -> libFailed(req, loginName() + "还没登录：在「多媒体」弹出来的页面里登录以后再点")); return; }
             }
-        }, "lg-voice").start();
+        });
     }
 
     private void libFailed(int req, String msg) {
@@ -606,7 +608,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         main.postDelayed(songTimeout, playing ? 4000 : 9000);
         final int req = ++songReq;
         final android.content.Context app = ctx.getApplicationContext();
-        new Thread(() -> { // 同曲库：发之前、发之后问「多媒体」在不在前台，跑到前台了多半是要登录
+        Workers.net(() -> { // 同曲库：发之前、发之后问「多媒体」在不在前台，跑到前台了多半是要登录
             int before = Player.foreground(app);
             boolean ok;
             if (h.src == 10) ok = Player.insertSong(app, h.id);
@@ -621,7 +623,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
                 try { Thread.sleep(400); } catch (InterruptedException e) { return; }
                 if (Player.foreground(app) == 1) { main.post(() -> { if (req == songReq && songWaitSeq >= 0) songDone(false, BydMedia.onlineName(h.src) + "要登录：在「多媒体」弹出来的页面里登录以后再点"); }); return; }
             }
-        }, "lg-song").start();
+        });
     }
 
     /** 媒体控制器推来了新东西：切过去了就发；队列变了（插进去了）过一会儿核对放的是不是这首 */
@@ -726,11 +728,11 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private void weatherRead() {
         if (weatherQueued) return;
         weatherQueued = true;
-        new Thread(() -> {
+        Workers.io(() -> {
             weatherQueued = false;
             if (!weather.read(ctx.getContentResolver())) return; // 别的车机没有这个应用：读不到，当查不到天气
             main.post(this::rainClock);
-        }, "lg-weather").start();
+        });
     }
 
     /** 显示着、雨珠是自动时跟着车机天气：数据接口一变就读，也听它给第三方发的刷新广播；藏起来、不是自动就不听 */
@@ -781,12 +783,12 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     }
 
     private void readArt(final String file) {
-        new Thread(() -> {
+        Workers.io(() -> {
             Bitmap b = null;
             try { Bitmap src = android.graphics.BitmapFactory.decodeFile(file); if (src != null) b = square(src); } catch (Exception ignored) { }
             final Bitmap fb = b;
             main.post(() -> { artBm = fb; pushSnapNow(); }); // 对不上正在放的这首时 buildSnap 里不会用它
-        }, "lg-art").start();
+        });
     }
 
     private static Bitmap square(Bitmap src) {
