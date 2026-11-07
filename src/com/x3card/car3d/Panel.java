@@ -305,8 +305,8 @@ final class Panel extends Sheet {
                 sb.append(cur);
             }
         }
-        if (sb.length() == 0) return "点一下检查更新";
-        sb.append("\n\n点这一行检查更新");
+        // 说明浮窗只放构建信息与本版更新日志，不再附「点这一行检查更新」提示：
+        // 点那一行本来就会检查更新，写在浮窗里反而让人误以为点浮窗文字也有效
         return sb.toString();
     }
 
