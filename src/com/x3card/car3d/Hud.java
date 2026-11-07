@@ -202,12 +202,20 @@ final class Hud extends View {
     private int[] musicBgRgb;  // 音乐整页背景主色（供音乐组件/顶栏/底部数据文字配色自适应）
     private long mPos, mDur, mRecv;
     private long mPosReported = -1; // 宿主上次上报的 positionMs（-1=还没收到过）：用来判断「位置真的变了」才重锚定，避免换句把进度清零
+    private boolean posTrust; // 位置是否已被可靠来源确认过（宿主有效 positionMs / 媒体控制器位置）：未确认时允许无条件校正一次
     private boolean posSet;         // 当前锚点是否对得上当前曲目（换歌后重设为 true，照琉光 posSet）
     private boolean mHadMedia;      // 是否曾经播过歌（媒体为空时据此决定保留上一首还是显示「暂无音乐」）
     private List<String> lyrics = new ArrayList<>();
     private List<Long> lyrTimes = new ArrayList<>();           // 与 lyrics 平行：每句在整首里的开始时间（宿主没给是 -1）
     private final List<String> liveLyrics = new ArrayList<>(); // 宿主只给逐句快照时累积的歌词行（换歌清空）
     private int lyrIdx = -1;      // 当前句是第几句（持久状态，照琉光 lyr.idx：不再每帧从 0 重扫，重复句按顺序递进）
+    // 歌词滚动（Apple Music 风格）：位移走指数逼近，换句时柔和滑动而不是瞬移；滚动期间 clockTick 临时提到 30 帧
+    private float lyrShift;       // 当前绘制用的位移（px）
+    private long lyrShiftAt;      // 上一帧时间（算 dt）
+    private boolean lyrShiftSet;  // 已有基准位移（首帧/换歌直接就位，不从 0 滑上来）
+    private Paint lyrMaskPaint;   // 上下边缘渐隐遮罩的画笔（复用）
+    private Shader lyrMaskShader; // 遮罩渐变（按视口尺寸缓存，避免每帧 new）
+    private float lyrMaskKey;     // 遮罩缓存的尺寸键
     private String lyrLine = "";  // 当前显示的句子（判断宿主推来的句子有没有换）
     private String lyrStale = ""; // 换歌时上一首留下的那句：宿主换歌后头几条快照常常还是它，照琉光 lyr.stale 挡掉
     private Runnable lyrAdvance;  // 连着两句一模一样时按时间自己往下走（琉光 chainRepeat）
@@ -788,7 +796,7 @@ final class Hud extends View {
     void setMedia(JSONObject m) {
         if (m == null) {
             if (!mHadMedia) { // 从没播过歌：直接空白
-                mTitle = mArtist = mLyric = mCover = null; mPos = mDur = 0; mRecv = 0; mPosReported = -1; posSet = false; playing = false; mTrackId = ""; mPkg = ""; liveLyrics.clear(); lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; lyrStale = ""; stopAdvance(); coverBm = null; invalidate(); return;
+                mTitle = mArtist = mLyric = mCover = null; mPos = mDur = 0; mRecv = 0; mPosReported = -1; posSet = false; posTrust = false; playing = false; mTrackId = ""; mPkg = ""; liveLyrics.clear(); lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; lyrStale = ""; stopAdvance(); coverBm = null; invalidate(); return;
             }
             // 播过歌但此刻媒体为空：常是接蓝牙电话时宿主把媒体会话挂起（status 不再是 ok）。保留上一首的歌名/封面/进度，只冻结播放态，不空白
             playing = false; mTrackId = ""; mPosReported = -1; lyrStale = ""; invalidate(); return;
@@ -814,6 +822,9 @@ final class Hud extends View {
             mPos = hasPos ? newPos : 0;
             mRecv = now;
             posSet = true;
+            // ★打开 App 时宿主常常报不出位置（会话刚绑定，positionMs 为空或 0），进度就从 0 数。
+            //   记一笔「位置还没被可靠来源确认」，等媒体控制器的第一条真实位置来了强制对齐（见 ctlPos）
+            posTrust = hasPos && newPos > 0;
         } else if (hasPos) {
             boolean posChanged = newPos != mPosReported; // 宿主这次上报的位置和上次不一样
             if (wasPlaying && !newPlaying && posSet) {
@@ -825,7 +836,7 @@ final class Hud extends View {
                 //   以前每来一条就把锚点拉到它身上，进度每次都被往回拽一截 —— 进度条和歌词持续慢半拍（「歌词延迟」）。
                 //   在死区内相信墙钟（mPos + 经过时间），它才是连续的。播放中途的 0 视为没给有效数字，忽略。
                 long mine = livePos();
-                if (!posSet || Math.abs(newPos - mine) > 1200) { mPos = newPos; mRecv = now; }
+                if (!posSet || Math.abs(newPos - mine) > 1200) { mPos = newPos; mRecv = now; posSet = true; posTrust = true; }
             } else if (newPlaying && !wasPlaying) {
                 // 暂停→播放：锚点位置不变，只把锚点时间对齐到现在，从冻结处继续走
                 mRecv = now;
@@ -971,6 +982,25 @@ final class Hud extends View {
         return Math.max(0, k);
     }
     private long livePos() { if (!posSet) return 0; if (playing && mDur > 0) return Math.min(mPos + (System.currentTimeMillis() - mRecv), mDur); return mPos; }
+
+    /**
+     * 车机媒体控制器推来的播放位置（在放歌时每 0.5 秒，p 是 at 那一刻的位置）。
+     * 照琉光 MediaState.ctlPos：和墙钟推算差 1.5 秒以上才校正；但「位置还没被可靠来源确认过」时
+     * 无条件认第一条 —— 这正是「歌正在放，打开 App 进度从 0 开始」的修复：宿主快照里没有 positionMs 时，
+     * 控制器这边半秒内就把进度拉回真实位置。
+     */
+    void ctlPos(long p, long at, float speed, boolean on, String title) {
+        if (!playing || title == null || !title.equals(mTitle)) return; // 暂停中 / 换歌路上不认
+        long real = p + (on ? Math.round((SystemClock.elapsedRealtime() - at) * Math.max(0f, speed)) : 0);
+        if (real < 0) return;
+        if (mDur > 0) real = Math.min(real, mDur);
+        long mine = livePos();
+        if (posSet && posTrust && Math.abs(real - mine) < 1500) return; // 死区：墙钟更准，别来回拽
+        mPos = real; mRecv = System.currentTimeMillis(); posSet = true; posTrust = true;
+        mPosReported = -1; // 下一条快照的 positionMs 仍有机会校正（同样受死区保护）
+        syncLyrIdx();
+        invalidate();
+    }
     private static String fmtTime(long ms) {
         long s = Math.max(0, ms) / 1000, m = s / 60, ss = s % 60;
         return m + ":" + (ss < 10 ? "0" : "") + ss;
@@ -1265,8 +1295,24 @@ final class Hud extends View {
 
         // 整列平移：当前句落在第 above 个槽；钳制保证开头贴顶、结尾贴底，窗口恒有 rows 行
         int above = (rows - 1) / 2;
-        float shift = (above - curPhys) * slot;
-        shift = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, shift));
+        float target = (above - curPhys) * slot;
+        target = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, target));
+        // ★柔和滚动（指数逼近，时间常数约 95ms）：换句时滑上去而不是瞬移，这是 Apple Music 观感的一半。
+        //   首帧 / 换歌 / 行槽尺寸大变时直接就位，免得从 0 滑一大段。
+        long nowMs = System.currentTimeMillis();
+        if (!lyrShiftSet || Math.abs(target - lyrShift) > viewH * 1.2f) {
+            lyrShift = target;
+        } else {
+            long dt = lyrShiftAt > 0 ? Math.min(90L, nowMs - lyrShiftAt) : 16L;
+            if (dt > 0) {
+                float k = 1f - (float) Math.exp(-dt / 95.0);
+                lyrShift += (target - lyrShift) * k;
+                if (Math.abs(target - lyrShift) < 0.4f) lyrShift = target;
+            }
+        }
+        lyrShiftAt = nowMs;
+        lyrShiftSet = true;
+        float shift = lyrShift;
 
         // 当前句已唱比例：整首歌词带时间戳时按「本句起点 → 下一句起点」线性推进；拿不到就整句强调色
         float sung = -1f;
@@ -1284,13 +1330,24 @@ final class Hud extends View {
 
         int clip = c.save();
         c.clipRect(x, viewY, x + w, viewY + viewH); // ★ 窗口高度 = 槽高 × N：裁出恰好 N 行
+        // ★上下边缘渐隐（Apple Music 的观感核心）：给歌词单独一层，画完用 DST_OUT 渐变把上下两端挖掉，
+        //   边缘句是"淡出"而不是被硬裁掉。内容比视口高才需要，否则只有一两行时会被一起淡化。
+        boolean fade = phys.size() * slot > viewH + 1;
+        int layer = fade ? c.saveLayer(x, viewY, x + w, viewY + viewH, null, Canvas.ALL_SAVE_FLAG) : -1;
         p.setTextAlign(Paint.Align.CENTER);
         int accL = coverAccent(); // 封面衍生强调色
+        float curCy = viewY + (curPhys + 0.5f) * slot + shift; // 当前句实际所在的槽中心：样式以它为中心
+        float halfRows = Math.max(1f, rows * 0.55f);
         for (int i = 0; i < phys.size(); i++) {
             float cy = viewY + (i + 0.5f) * slot + shift;
-            if (cy < viewY - slot || cy > viewY + viewH + slot) continue; // 视口外跳过
+            if (cy < viewY - slot * 1.2f || cy > viewY + viewH + slot * 1.2f) continue; // 视口外跳过
             String txt = phys.get(i);
-            if (owner.get(i) == cur) {
+            boolean isCur = owner.get(i) == cur;
+            // 距离连续插值（字号按句、透明度按行）：滚动途中样式跟着位置一起变，不会一跳一跳
+            float dLine = Math.abs(owner.get(i) - (cur >= 0 ? cur : owner.get(i)));
+            float kFont = Math.min(1f, dLine / 2f);
+            float kA = Math.min(1f, Math.abs(cy - curCy) / slot / halfRows);
+            if (isCur) {
                 p.setTypeface(ui700); p.setTextSize(curFont);
                 float by = baseline(cy, p);
                 if (sung >= 0f && txt.length() > 1) {
@@ -1307,13 +1364,31 @@ final class Hud extends View {
                     c.drawText(txt, x + w / 2, by, p);
                 }
             } else {
-                p.setTypeface(ui500); p.setTextSize(subFont);
-                p.setColor(withA(mute, 0.52f));
+                p.setTypeface(ui500); p.setTextSize(fontPx * (1.05f - 0.17f * kFont));
+                p.setColor(withA(mute, 0.62f - 0.44f * kA));
                 c.drawText(txt, x + w / 2, baseline(cy, p), p);
             }
         }
-        c.restore();
+        if (fade) {
+            if (lyrMaskPaint == null) {
+                lyrMaskPaint = new Paint();
+                lyrMaskPaint.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT));
+            }
+            float key = viewY * 7919f + viewH;
+            if (lyrMaskShader == null || Math.abs(lyrMaskKey - key) > 0.5f) {
+                lyrMaskKey = key;
+                lyrMaskShader = new LinearGradient(0, viewY, 0, viewY + viewH,
+                    new int[] { 0x00000000, 0xCC000000, 0xFF000000, 0xFF000000, 0xCC000000, 0x00000000 },
+                    new float[] { 0f, 0.10f, 0.30f, 0.70f, 0.90f, 1f }, Shader.TileMode.CLAMP);
+            }
+            lyrMaskPaint.setShader(lyrMaskShader);
+            c.drawRect(x, viewY, x + w, viewY + viewH, lyrMaskPaint);
+            c.restoreToCount(layer);
+        }
+        c.restoreToCount(clip);
         p.setTextAlign(Paint.Align.LEFT);
+        // 还在滑动：自己排下一帧（约 30 帧）。不能等 clockTick 的 200ms 节拍——那样动画还没开始就结束了。
+        if (Math.abs(target - lyrShift) > 0.5f) postInvalidateDelayed(33);
     }
     /** 封面位图（CarUi 后台加载好给过来）；没有时画占位音符。同时预生成「缩糊位图」与「最亮/最暗两极色」，供跟随封面背景用 */
     void setCover(android.graphics.Bitmap b) {

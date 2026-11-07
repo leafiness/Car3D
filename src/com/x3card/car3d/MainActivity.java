@@ -167,6 +167,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             @Override public void seek(long ms) { ui.toast("这台车跳不了歌词", 2600); }
             @Override public void fullscreen() { MainActivity.this.fullscreen(); }
             @Override public void toast(String msg) { ui.toast(msg, 2800); }
+            @Override public void ctlPos(long p, long at, float speed, boolean on, String title) { ui.hud.ctlPos(p, at, speed, on, title); }
         });
         stage.setLg(lgHost);
         ui.hud.setLgHost(lgHost);
@@ -247,6 +248,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         if (lgHost != null) lgHost.setFsMode(isFull() ? "small" : onMainScreen() ? "" : "full");
         if (!slept) wake(true);
         host.start();
+        if (lgHost != null) lgHost.attachMedia(); // 前台常连媒体控制器：音乐页的进度校正靠它（同原版 onStart）
         if (isFull()) { MainActivity p = pip.get(); if (p != null && p != this) p.sleep(true); }
         autoCheckUpdate();
     }

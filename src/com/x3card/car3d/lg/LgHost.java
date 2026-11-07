@@ -53,6 +53,9 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         void seek(long ms);
         void fullscreen();
         void toast(String msg);
+        /** 车机媒体控制器推来的播放位置（在放歌时每 0.5 秒）：p 是 at（elapsedRealtime）那一刻的位置。
+         *  同一份数据在琉光里由 MediaState.ctlPos 消化，car3d 这边交给 Hud（音乐页与琉光页共用这一份位置）。 */
+        void ctlPos(long p, long at, float speed, boolean on, String title);
     }
 
     private final GLSurfaceView glView;
@@ -122,7 +125,17 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
             }
             @Override public void heartFailed() { toast("没收藏上，过一会儿再试"); }
             @Override public void modeFailed() { toast("播放模式没切过去，过一会儿再试"); }
-            @Override public void position(long p, long at, float speed, boolean on) { } // 播放位置 car3d 的快照里有
+            @Override public void position(long p, long at, float speed, boolean on) {
+                // ★宿主快照里的 positionMs 常常是空的或过时的（打开 App 时从 0 数就是这个原因），
+                //   媒体控制器这边在放歌时每 0.5 秒推一次真实位置 —— 照原版 MediaState.ctlPos 接上：
+                //   不是「多媒体」在放（蓝牙/第三方报了也不准）、蓝牙音源、歌名对不上时都不认。
+                if (otherPlayer()) return;
+                if (bydMedia == null || bydMedia.source() == 4) return; // 4 = 蓝牙音源
+                final String t = bydMedia.title();
+                if (t == null || t.isEmpty()) return;
+                final float sp = speed;
+                main.post(() -> act.ctlPos(p, at, sp, on, t));
+            }
         });
         scene.setSongs(Collections.<BydMedia.Song>emptyList(), -1);
         applyRain();
@@ -850,6 +863,20 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         bydMedia.stop();
         weatherWatch(false);
         covers.quit();
+    }
+
+    /**
+     * 应用在前台就连着媒体控制器（同原版 MainActivity.onStart）。
+     * ★不能等到进第三页才连：音乐页的播放进度要靠它每 0.5 秒推一次位置来校正
+     *   （宿主快照里的 positionMs 常常是空的/过时的，打开 App 时进度从 0 数就是这个原因）。
+     */
+    public void attachMedia() {
+        main.post(() -> {
+            if (bydMedia == null) return;
+            bydMedia.start(); // 幂等
+            pushSongs();
+            bookArtists();
+        });
     }
 
     // ---------- 手势 ----------
