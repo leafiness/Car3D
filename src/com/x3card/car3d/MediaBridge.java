@@ -27,7 +27,8 @@ final class MediaBridge {
         List<Long> times();     // 每句开始时间（没有时间就是 null，长度也可能对不上）
         int cur();              // 现在第几句（没有整首歌词时按播放位置兜底，见 Hud.cur）
         long dur();
-        long pos();
+        long posAnchor();       // 位置锚点值（那一刻的播放位置，不含墙钟推算）
+        long anchorAt();        // 锚点时刻（elapsedRealtime），下游用它 + 经过时间算实时位置
         Bitmap cover();
         int page();             // 当前页索引（2 = 琉光）
         void pollMedia();       // 主动问一次媒体（订阅推送的兜底）
@@ -81,6 +82,6 @@ final class MediaBridge {
             }
         }
         host.media(src.on(), src.playing(), src.full(), src.title(), src.artist(), src.track(), src.pkg(),
-                   lines, times, src.cur(), src.dur(), src.pos(), src.cover());
+                   lines, times, src.cur(), src.dur(), src.posAnchor(), src.anchorAt(), src.cover());
     }
 }

@@ -301,11 +301,16 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     /** 媒体快照（主线程）：交给 Hud 画音乐卡片；换歌了去拉整首歌词、换封面 */
     @Override public void media(JSONObject m) { main.post(() -> {
         hud.setMedia(m);
-        // 曲目号：trackId 优先，没给就用歌名兜底（照 uiplus 规范，trackId 可能为空）
-        String tid = m == null ? "" : (m.optString("trackId", "").isEmpty() ? m.optString("title", "") : m.optString("trackId", ""));
+        // ★媒体会话挂起（接蓝牙电话）不是换歌：不动曲目、不重拉歌词、不清封面，保留上一首。
+        //   以前这里把 lastTrackId 清成空并把封面清掉，会话一恢复就当成全新曲目重来一遍。
+        if (m == null) return;
+        // 曲目号：优先用 trackId；车机偶发漏报时沿用上一次认定的号（和 Hud 的换歌判定对齐），
+        // 别因为一条空号快照就重新拉整首歌词、重取封面，歌词会在这期间跳回开头。
+        String raw = m.optString("trackId", "");
+        String tid = !raw.isEmpty() ? raw : (!lastTrackId.isEmpty() ? lastTrackId : m.optString("title", ""));
         boolean trackChanged = !tid.equals(lastTrackId);
         if (trackChanged) { lastTrackId = tid; trackAt = android.os.SystemClock.uptimeMillis(); if (act != null) act.musicLyrics(); }
-        String url = m == null ? "" : m.optString("coverUrl", "");
+        String url = m.optString("coverUrl", "");
         // 换歌后宿主头一两秒给的封面常常还是上一首的（同缓存文件、内容没换，地址也一样）：
         // 取到的和上一首确认过的封面一模一样时先不用，每 0.3s 再取一次，换成新图了才算这首的；3s 还一样当真是同一张（同专辑）。
         // 认准后再过 2s 看一眼（宿主有时过会儿才换内容）。没封面地址先占位。做法照琉光音乐。

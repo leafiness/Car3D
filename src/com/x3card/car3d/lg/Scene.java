@@ -155,6 +155,13 @@ final class Scene implements GLSurfaceView.Renderer {
         //   只信快照里的 cur 时，宿主一旦停止逐句推送，整首就定格在第一句不动。
         int cur = curByPos();
         if (cur < 0) cur = MS.cur;
+        // ★不回退：位置在句界附近抖一下（采样误差、两份快照锚点切换）别让滚轮跳回开头。
+        //   只有明显拖回前面（超过 2 秒）才允许退回去，和音乐页 Hud.curByPos 的保护口径一致。
+        int prev = lastSt[0];
+        if (cur >= 0 && prev > cur && prev < lines.length && MS.times != null && MS.times.length > prev) {
+            long st = MS.times[prev], p = MS.pos();
+            if (st >= 0 && p > st - 2000) cur = prev;
+        }
         return lastSt = new int[] { (int) clamp(cur, 0, lines.length - 1), cur >= 0 ? 1 : 0 };
     }
 

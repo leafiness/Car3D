@@ -88,7 +88,8 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private String[] lLines;          // 交给场景的那个数组（内容没变就沿用同一个引用：Snap.same 按引用比）
     private long[] lTimes;
     private int lCur = -2;
-    private long lDur = -1, lastPos;
+    private long lDur = -1, lastPos, lastPosAt; // 位置锚点 + 锚点时刻：Snap.pos() 只按这一对算一次经过时间
+    private long emptySince;      // 歌词数组第一次变空的时间（换歌中间态先别重建滚轮）
     private boolean lastFull;
     private Bitmap lCover;
     // ★这四个版本号必须一路递增、每份快照都带上：Scene 只拿它跟上次比来判断「换歌 / 换歌词 / 换封面 / 换句」。
@@ -725,7 +726,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
 
     /** 按设置、天气、这首歌定下不下（媒体、设置、天气变了都调一次；每分钟也看一次——逐分钟降水按现在这一分钟算） */
     private void rainClock() {
-        rainApply(buildSnap(lastPos, SystemClock.elapsedRealtime()));
+        rainApply(buildSnap(lastPos, lastPosAt, SystemClock.elapsedRealtime()));
     }
 
     private void rainApply(MediaState.Snap s) {
@@ -891,7 +892,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
 
     // ---------- 媒体数据桥接 ----------
     public void media(boolean on, boolean playing, boolean full, String title, String artist, String track, String pkg,
-                      String[] lines, long[] times, int cur, long dur, long pos, Bitmap cover) {
+                      String[] lines, long[] times, int cur, long dur, long pos, long posAt, Bitmap cover) {
         String tr = track == null ? "" : track, ti = title == null ? "" : title, ar = artist == null ? "" : artist;
         String[] ls = lines == null ? NO_LINES : lines;
         // 刚按过播放/暂停：车机还没回推就把本地翻过来的状态顶上去（真值一到立刻以真值为准）
@@ -909,11 +910,23 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         boolean chTrack = !tr.isEmpty() ? !tr.equals(lTrack) : (lTrack.isEmpty() && chText);
         // 先看有没有真的变：Hud 会定时推，没变就不建对象、不叫醒场景
         boolean chLines = !sameLines(ls, times);
+        // ★换歌瞬间 Hud 会先清掉整首歌词，等新歌词拉回来再给。这期间若把空数组推给场景，
+        //   revLines 一变滚轮就重建到第一句 —— 正是「跳回开头再回到当前句」。先沿用上一份，最多等 6 秒。
+        boolean linesHold = false;
+        long now = SystemClock.elapsedRealtime();
+        if (posAt <= 0 || posAt > now) posAt = now; // 锚点时刻无效（还没收到过媒体）：按当下算，别让 Snap.pos() 加上开机至今的时间
+        if (ls.length == 0 && lLines != null && lLines.length > 0) {
+            if (emptySince == 0) emptySince = now;
+            if (now - emptySince < 6000) { chLines = false; linesHold = true; }
+        } else emptySince = 0;
         boolean chCover = cover != lCover;
         boolean chCur = cur != lCur;
         boolean chPkg = !android.text.TextUtils.equals(pkg == null ? "" : pkg, lPkg);
-        boolean idle = !chTrack && !chText && !chLines && !chCover && !chCur && !chPkg && playing == lPlaying0 && on == lOn0 && dur == lDur;
-        long now = SystemClock.elapsedRealtime();
+        // ★锚点（值或时刻）变了必须立刻重推：Scene 靠 Snap.posBase/posAt 自己算实时位置，
+        //   锚点不更新，它会一直沿用旧的那条时间线（进度和歌词自然滞后）。
+        boolean anchorChanged = pos != lastPos || posAt != lastPosAt;
+        boolean idle = !anchorChanged && !chTrack && !chText && !chLines && !chCover && !chCur && !chPkg
+                    && playing == lPlaying0 && on == lOn0 && dur == lDur && (full || linesHold) == lastFull;
         // 什么都没变、也没到半秒：连快照都不建（播放位置由 Scene 自己按墙钟往后推，不用每帧对齐）
         if (idle && now - lastPushAt < 400) return;
         if (chTrack) { rTrack = ++rev; lTrack = tr; }
@@ -922,9 +935,9 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         if (chCover) { rCover = ++rev; lCover = cover; }
         if (chCur) { rCur = ++rev; lCur = cur; }
         if (chPkg) lPkg = pkg == null ? "" : pkg;
-        lDur = dur; lOn0 = on; lPlaying0 = playing; lastFull = full; lastPos = pos; lastPushAt = now;
+        lDur = dur; lOn0 = on; lPlaying0 = playing; lastFull = full || linesHold; lastPos = pos; lastPosAt = posAt; lastPushAt = now;
 
-        MediaState.Snap s = buildSnap(pos, now);
+        MediaState.Snap s = buildSnap(pos, posAt, now);
         if (onPage) scene.setSnap(s); // 不在第三页只记账不叫醒 GL（车况页在按需出帧，别为它多画一帧）
         rainApply(s);
     }
@@ -933,7 +946,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
      * 用缓存的媒体数据拼一份快照（主线程）。红心、播放模式、音源从车机媒体控制器（BydMedia）来，
      * 队列可跳（seek：在放的是「多媒体」、有整首歌词、有总时长），同原版 MediaState 的字段口径。
      */
-    private MediaState.Snap buildSnap(long pos, long now) {
+    private MediaState.Snap buildSnap(long pos, long posAt, long now) {
         MediaState.Snap s = new MediaState.Snap();
         boolean op = otherPlayer();
         int src = op ? -1 : bydMedia.source();
@@ -951,13 +964,18 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         s.times = lTimes == null ? NO_TIMES : lTimes;
         s.cur = lCur;
         s.dur = lDur;
-        // 跳进度后车机的真位置还没跟上：先按跳到的位置显示（真位置到了或超时就撤）
+        // 跳进度后车机的真位置还没跟上：先按跳到的位置显示（真位置到了或超时就撤）。
+        // 比较要用「锚点 + 已经过的时间」的当前实时位置，而不是裸锚点值。
+        long live = pos + (lPlaying0 ? Math.max(0, now - posAt) : 0);
         if (posOvr >= 0) {
-            if (Math.abs(pos - posOvr) < 2500 || now - posOvrAt > 5000) posOvr = -1;
-            else pos = posOvr;
+            if (Math.abs(live - posOvr) < 2500 || now - posOvrAt > 5000) posOvr = -1;
+            else { pos = posOvr; posAt = now; }
         }
+        // ★pos 是锚点值（那一刻的播放位置），posAt 是锚点时刻。以前这里把「Hud 已经算过墙钟的
+        //   实时位置」当锚点、又把 posAt 记成 now，Snap.pos() 再加一次经过时间 —— 位置 2 倍速走，
+        //   每来一份新快照又往回退一截，句界附近的歌词就反复横跳、整体慢半拍。
         s.posBase = pos;
-        s.posAt = now;
+        s.posAt = posAt;
         s.cover = lCover != null ? lCover : artCover(lTitle, lArtist, lDur);
         s.coverTrack = s.track;
         s.heart = lOn0 ? bydMedia.heart(lTitle) : BydMedia.HIDE;
@@ -974,7 +992,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private void pushSnapCached() { main.post(this::pushSnapNow); }
     private void pushSnapNow() {
         if (!onPage) return; // 离页只记账；enter() 里会推最新的一份
-        scene.setSnap(buildSnap(lastPos, SystemClock.elapsedRealtime()));
+        scene.setSnap(buildSnap(lastPos, lastPosAt, SystemClock.elapsedRealtime()));
     }
 
     /** 宿主没给封面（蓝牙音乐、没内嵌封面的歌）时用琉光自己的占位封面，同原版 MediaState.makeCover。

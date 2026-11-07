@@ -616,8 +616,10 @@ final class MediaState {
         Bitmap cover;
         String coverTrack;
 
-        /** 播放位置：做这份快照时的位置 + 之后经过的时间（在放才走） */
+        /** 播放位置：锚点那一刻的位置 + 之后经过的时间（在放才走）。
+         *  posBase 必须是「锚点值」而不是已经算过墙钟的实时位置，否则这里会再加一次经过时间。 */
         long pos() {
+            if (posAt <= 0) return Math.max(0, dur > 0 ? Math.min(posBase, dur) : posBase);
             long p = posBase + (rawPlaying ? SystemClock.elapsedRealtime() - posAt : 0);
             return Math.max(0, dur > 0 ? Math.min(p, dur) : p);
         }

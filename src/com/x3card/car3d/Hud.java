@@ -198,10 +198,15 @@ final class Hud extends View {
     private int[] coverLight, coverDark;          // 封面最亮/最暗两极色（双色流动/主色光晕用）
     private Paint coverPaint;                     // 画模糊封面用（开 bitmap 滤镜）
     private int[] musicBgRgb;  // 音乐整页背景主色（供音乐组件/顶栏/底部数据文字配色自适应）
+    // 位置只有一条时间线：mPos 是「锚点那一刻的播放位置」，mRecv 是锚点时刻（elapsedRealtime 口径，不受系统时间调整影响）。
+    // 实时位置 = mPos + (elapsedRealtime - mRecv)。音乐页、进度条、歌词、琉光页全部用这一个锚点，
+    // 绝不能把「已经算过墙钟的实时位置」再当锚点交给下游，否则下游又加一次经过时间，位置会 2 倍速走、每份快照来回抖。
     private long mPos, mDur, mRecv;
     private long mPosReported = -1; // 宿主上次上报的 positionMs（-1=还没收到过）：用来判断「位置真的变了」才重锚定，避免换句把进度清零
+    private long lastCtlAt;         // 上次收到媒体控制器真实位置的时间（elapsedRealtime）：这段时间内宿主快照的 positionMs 不参与校正
     private boolean posTrust; // 位置是否已被可靠来源确认过（宿主有效 positionMs / 媒体控制器位置）：未确认时允许无条件校正一次
     private boolean posSet;         // 当前锚点是否对得上当前曲目（换歌后重设为 true，照琉光 posSet）
+    private int lastCur;            // 上一次对外给过的有效歌词句索引：换歌瞬间歌词还没拉回来时别把它清成 0，否则琉光滚轮会跳回第一句
     private boolean mHadMedia;      // 是否曾经播过歌（媒体为空时据此决定保留上一首还是显示「暂无音乐」）
     private List<String> lyrics = new ArrayList<>();
     private List<Long> lyrTimes = new ArrayList<>();           // 与 lyrics 平行：每句在整首里的开始时间（宿主没给是 -1）
@@ -712,11 +717,15 @@ final class Hud extends View {
             // ★当前句以「播放位置」为准：有整首歌词带每句时间时，位置是唯一真相（同琉光 MediaState.anchor）。
             //   只靠宿主的逐句推送到不了就整首定格在第一句——车机换句推送一旦停了，歌词就永远不滚。
             int byPos = curByPos();
-            if (byPos >= 0) lyrIdx = byPos; // 音乐页那套也用这个索引，一起跟着位置走
-            return byPos >= 0 ? byPos : (lyrIdx >= 0 ? lyrIdx : 0);
+            if (byPos >= 0) { lyrIdx = byPos; lastCur = byPos; return byPos; } // 音乐页那套也用这个索引，一起跟着位置走
+            // ★位置暂时不可信（刚换歌整首歌词还没拉回来、宿主报 0、控制器首条还没到）：沿用上一次的有效句。
+            //   以前这里返回 0，假换歌时琉光滚轮就会「跳回开头再回到当前句」。
+            if (lyrIdx >= 0) { lastCur = lyrIdx; return lyrIdx; }
+            return lastCur;
         }
         @Override public long dur() { return mDur; }
-        @Override public long pos() { return livePos(); }
+        @Override public long posAnchor() { return mPos; }   // 锚点值，不含墙钟推算
+        @Override public long anchorAt() { return mRecv; }   // 锚点时刻（elapsedRealtime）
         @Override public Bitmap cover() { return coverBm; }
         @Override public int page() { return pageIdx; }
         @Override public void pollMedia() { if (mediaPoll != null) mediaPoll.run(); }
@@ -789,13 +798,16 @@ final class Hud extends View {
     void setMedia(JSONObject m) {
         if (m == null) {
             if (!mHadMedia) { // 从没播过歌：直接空白
-                mTitle = mArtist = mLyric = mCover = null; mPos = mDur = 0; mRecv = 0; mPosReported = -1; posSet = false; posTrust = false; playing = false; mTrackId = ""; mPkg = ""; liveLyrics.clear(); lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; lyrStale = ""; stopAdvance(); coverBm = null; invalidate(); return;
+                mTitle = mArtist = mLyric = mCover = null; mPos = mDur = 0; mRecv = 0; mPosReported = -1; posSet = false; posTrust = false; playing = false; mTrackId = ""; mPkg = ""; liveLyrics.clear(); lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lastCur = 0; lyrLine = ""; lyrStale = ""; stopAdvance(); coverBm = null; invalidate(); return;
             }
-            // 播过歌但此刻媒体为空：常是接蓝牙电话时宿主把媒体会话挂起（status 不再是 ok）。保留上一首的歌名/封面/进度，只冻结播放态，不空白
-            playing = false; mTrackId = ""; mPosReported = -1; lyrStale = ""; invalidate(); return;
+            // 播过歌但此刻媒体为空：常是接蓝牙电话时宿主把媒体会话挂起（status 不再是 ok）。保留上一首的歌名/封面/进度，只冻结播放态，不空白。
+            // ★曲目号和位置锚点也一起留着：以前这里把 mTrackId 清空、mPosReported 置 -1，会话恢复后第一条快照
+            //   必然被判成「换歌」→ 位置清零、整首歌词清空，正是「进度跳回零 / 歌词跳回开头再回当前句」的触发点。
+            playing = false; lyrStale = ""; invalidate(); return;
         }
         mHadMedia = true;
-        if (m != null) bridge.seen(); // 收到新快照：补问的计时归零
+        bridge.seen(); // 收到新快照：补问的计时归零
+        String prevTitle = mTitle, prevArtist = mArtist; // 换歌判定要拿「上一条快照」的歌名比
         String prevLyric = mLyric; // 换歌前那句（下面 trackChanged 时记为「上一首残留的那句」）
         mTitle = m.optString("title", ""); mArtist = m.optString("artist", "");
         mLyric = lyricText(m.optString("lyric", "")); mCover = m.optString("coverUrl", "");
@@ -808,28 +820,36 @@ final class Hud extends View {
         boolean wasPlaying = playing; // 上一帧的播放态（playing 字段在本方法末尾才被新值覆盖）
         String newTrack = m.optString("trackId", "");
         if ("null".equals(newTrack)) newTrack = "";
-        boolean trackChanged = !newTrack.equals(mTrackId);
-        long now = System.currentTimeMillis();
+        boolean textChanged = !clean(mTitle).equals(clean(prevTitle)) || !clean(mArtist).equals(clean(prevArtist));
+        // ★车机偶发漏报曲目号（trackId 空）不算换歌。以前只比裸字符串，一条空号快照就把位置清 0、
+        //   整首歌词全清 —— 进度跳回零、歌词跳回开头，等控制器位置和歌词拉回来才恢复，正好是报障的现象。
+        //   真正换歌：号变了，或者「一直没号、歌名/歌手变了」。
+        boolean trackChanged = (!newTrack.isEmpty() && !newTrack.equals(mTrackId))
+                            || (newTrack.isEmpty() && textChanged);
+        long now = SystemClock.elapsedRealtime();
         if (trackChanged) {
-            // 换歌：以宿主给的位置重新锚定（没给位置就从 0 起算）
-            mPos = hasPos ? newPos : 0;
+            // 真换歌：位置从宿主给的值起算；没给（或给了 0）就先记 0，标「未确认」，
+            // 等媒体控制器的第一条真实位置无条件对齐（见 ctlPos）。
+            mPos = hasPos && newPos > 0 ? newPos : 0;
             mRecv = now;
             posSet = true;
-            // ★打开 App 时宿主常常报不出位置（会话刚绑定，positionMs 为空或 0），进度就从 0 数。
-            //   记一笔「位置还没被可靠来源确认」，等媒体控制器的第一条真实位置来了强制对齐（见 ctlPos）
-            posTrust = hasPos && newPos > 0;
+            posTrust = false;
+            lastCtlAt = 0; // 让下一条控制器位置立刻生效，别被「控制器活跃」窗口挡掉
         } else if (hasPos) {
             boolean posChanged = newPos != mPosReported; // 宿主这次上报的位置和上次不一样
             if (wasPlaying && !newPlaying && posSet) {
                 // 暂停：把锚点位置对齐到「当前实时播放位置」，冻结的是准确位置（照琉光 anchor(pos())，不再卡在最后一次上报的位置）
                 mPos = livePos(); mRecv = now;
             } else if (posChanged && newPos != 0) {
-                // 位置变了：只有偏得够多（拖进度、跳曲、时钟漂移）才重锚定。
-                // ★死区照琉光 MediaState.anchor：宿主报的位置往往是几百毫秒前采样的，消息还要走一遭才到；
-                //   以前每来一条就把锚点拉到它身上，进度每次都被往回拽一截 —— 进度条和歌词持续慢半拍（「歌词延迟」）。
-                //   在死区内相信墙钟（mPos + 经过时间），它才是连续的。播放中途的 0 视为没给有效数字，忽略。
                 long mine = livePos();
-                if (!posSet || Math.abs(newPos - mine) > 2000) { mPos = newPos; mRecv = now; posSet = true; posTrust = true; }
+                // ★控制器在活跃地报真实位置时，宿主快照里的 positionMs 只是它几百毫秒前（甚至更早）的采样；
+                //   拿它当权威反复重锚定，就是把位置一直往回拽 —— 进度来回跳、两页歌词一起滞后。
+                //   这段窗口里只让墙钟往前走。控制器不活跃时才用宿主值兜底，且只认「明显前进」（拖进度/跳曲），
+                //   向后回拽（滞后采样）一律忽略，只有明显的手动回拖才认。
+                boolean ctlFresh = now - lastCtlAt < 3000;
+                boolean forward = newPos > mine + 2000;
+                boolean seekBack = newPos < mine - 8000 && !ctlFresh;
+                if (!posSet || (!ctlFresh && (forward || seekBack))) { mPos = newPos; mRecv = now; posSet = true; posTrust = true; }
             } else if (newPlaying && !wasPlaying) {
                 // 暂停→播放：锚点位置不变，只把锚点时间对齐到现在，从冻结处继续走
                 mRecv = now;
@@ -841,7 +861,7 @@ final class Hud extends View {
         }
         mPosReported = hasPos ? newPos : mPosReported;  // 记住宿主上报的位置，下次比对
         mDur = newDur;
-        mTrackId = newTrack;
+        if (trackChanged || !newTrack.isEmpty()) mTrackId = newTrack; // 空号沿用已认定的曲目，别把号抹掉
         if (trackChanged) { // 换歌：上一首的整首歌词、累积句、当前句索引全部作废（整首歌词随后由 CarUi 重新拉）
             liveTrack = mTrackId;
             lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; liveLyrics.clear(); stopAdvance();
@@ -992,7 +1012,11 @@ final class Hud extends View {
         }
         return r;
     }
-    private long livePos() { if (!posSet) return 0; if (playing && mDur > 0) return Math.min(mPos + (System.currentTimeMillis() - mRecv), mDur); return mPos; }
+    private long livePos() {
+        if (!posSet) return 0;
+        long p = playing ? mPos + (SystemClock.elapsedRealtime() - mRecv) : mPos; // 没给时长也要走，否则进度和歌词会定住
+        return mDur > 0 ? Math.min(p, mDur) : p;
+    }
 
     /**
      * 车机媒体控制器推来的播放位置（在放歌时每 0.5 秒，p 是 at 那一刻的位置）。
@@ -1001,17 +1025,25 @@ final class Hud extends View {
      * 控制器这边半秒内就把进度拉回真实位置。
      */
     void ctlPos(long p, long at, float speed, boolean on, String title) {
-        if (!playing || title == null || !title.equals(mTitle)) return; // 暂停中 / 换歌路上不认
-        long real = p + (on ? Math.round((SystemClock.elapsedRealtime() - at) * Math.max(0f, speed)) : 0);
+        // 歌名归一后再比：宿主快照和控制器给的常差空格/大小写，严格 equals 会让控制器位置长期进不来
+        if (!playing || title == null || !clean(title).equals(clean(mTitle))) return; // 暂停中 / 换歌路上不认
+        long now = SystemClock.elapsedRealtime();
+        long real = p + (on ? Math.round((now - at) * Math.max(0f, speed)) : 0);
         if (real < 0) return;
         if (mDur > 0) real = Math.min(real, mDur);
         long mine = livePos();
-        // ★信任过位置之后只认「离谱」的偏差（>5 秒）：车机推的是它几百毫秒前的采样，
-        //   1~2 秒的偏差反复校正只会把进度条来回拽 —— 歌词跟着前后跳。墙钟一小时也漂不到 5 秒。
-        if (posSet && posTrust && Math.abs(real - mine) < 5000) return;
-        mPos = real; mRecv = System.currentTimeMillis(); posSet = true; posTrust = true;
-        mPosReported = -1; // 下一条快照的 positionMs 仍有机会校正（同样受死区保护）
-        invalidate();      // 索引等紧随其后的快照来更新，这里不再单独写（防止两条时间线）
+        // ★控制器每 0.5 秒报一次真实位置，且已按 at 补过传输延迟：它是播放中的权威。
+        //   以前用 5 秒死区，宿主把锚点往回拽 2~3 秒时控制器也拉不回来 —— 两页歌词就一直慢半拍。
+        //   死区收到 1.2 秒（同琉光 MediaState.ctlPos 的 1.5 秒口径）；位置还没被确认过时无条件认第一条。
+        lastCtlAt = now;   // 哪怕偏差落在死区内不重锚定，也说明控制器还活着，宿主快照继续让位
+        if (!(posSet && posTrust && Math.abs(real - mine) < 1200)) {
+            mPos = real; mRecv = now; posSet = true; posTrust = true;
+            if (pageIdx == 2) bridge.pushNow(); // 锚点变了：第三页立刻重推快照，别等下一拍
+        }
+        // ★权威位置到了就按它推进当前句：和 setMedia 用的是同一个 curByPos（同一条时间线，不是新增时钟）。
+        //   以前只 invalidate、把索引留给下一条宿主快照，订阅一停摆或刚换完歌歌词还没到，整首就卡在第一句不滚。
+        syncLyrIdx();
+        invalidate();
     }
     private static String fmtTime(long ms) {
         long s = Math.max(0, ms) / 1000, m = s / 60, ss = s % 60;
