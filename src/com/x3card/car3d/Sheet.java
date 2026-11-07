@@ -487,8 +487,11 @@ abstract class Sheet extends FrameLayout {
         anchor.getLocationOnScreen(loc);
         int iconCx = loc[0] + anchor.getWidth() / 2;
         int gap = px(0.05f);
-        boolean below = loc[1] + anchor.getHeight() + gap + triH + cardH <= win.bottom - edge; // 下面放得下就放下面
-        if (!below && loc[1] - gap - cardH - triH < win.top + edge) below = true; // 上方也放不下：仍放下面
+        // ★优先显示在 ⓘ 上方：上方放得下就翻上去，上方放不下才落到下方；
+        //   上下都放不下时选空间较大的一侧（尖角方向跟着 below 一起翻）
+        boolean fitAbove = loc[1] - gap - cardH - triH >= win.top + edge;
+        boolean fitBelow = loc[1] + anchor.getHeight() + gap + triH + cardH <= win.bottom - edge;
+        boolean below = !fitAbove && (fitBelow || loc[1] - win.top <= win.bottom - loc[1]);
         int x = iconCx - cardW / 2;
         x = Math.max(win.left + edge, Math.min(x, win.right - edge - cardW)); // 左右别出窗口
         // 浮窗最宽已和设置页一致：横向也夹在设置页内，别飘到车模或其它页面上
