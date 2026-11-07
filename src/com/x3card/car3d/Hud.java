@@ -99,8 +99,20 @@ final class Hud extends View {
     private final Handler clockH = new Handler(Looper.getMainLooper());
     private final Runnable clockRun = this::clockTick;
     private void clockTick() {
+        syncLyrIdx(); // 歌词句跟着播放位置走，不等宿主下一次推送
         invalidate();
         clockH.postDelayed(clockRun, (musicOn && playing) ? 200 : 1000);
+    }
+
+    /**
+     * 把当前句对齐到播放位置。以前只在 setMedia（收到宿主快照）里做，
+     * 宿主推送一稀疏（换句推送停、或只在一秒一次的快照里带位置），歌词就跟着慢半拍。
+     * 时钟本来就按 5Hz 跑，顺手对齐一次，不给界面增加额外重绘。
+     */
+    private void syncLyrIdx() {
+        if (!playing || lyrics.isEmpty()) return;
+        int bp = curByPos();
+        if (bp >= 0) lyrIdx = bp;
     }
 
     Hud(Context c, Settings s, Tap tap) {
@@ -808,8 +820,12 @@ final class Hud extends View {
                 // 暂停：把锚点位置对齐到「当前实时播放位置」，冻结的是准确位置（照琉光 anchor(pos())，不再卡在最后一次上报的位置）
                 mPos = livePos(); mRecv = now;
             } else if (posChanged && newPos != 0) {
-                // 位置真变了（开始 / 拖进度 / 正常推进）：重锚定。播放中途的 0 视为宿主没给有效数字，忽略（不是真跳回开头）
-                mPos = newPos; mRecv = now;
+                // 位置变了：只有偏得够多（拖进度、跳曲、时钟漂移）才重锚定。
+                // ★死区照琉光 MediaState.anchor：宿主报的位置往往是几百毫秒前采样的，消息还要走一遭才到；
+                //   以前每来一条就把锚点拉到它身上，进度每次都被往回拽一截 —— 进度条和歌词持续慢半拍（「歌词延迟」）。
+                //   在死区内相信墙钟（mPos + 经过时间），它才是连续的。播放中途的 0 视为没给有效数字，忽略。
+                long mine = livePos();
+                if (!posSet || Math.abs(newPos - mine) > 1200) { mPos = newPos; mRecv = now; }
             } else if (newPlaying && !wasPlaying) {
                 // 暂停→播放：锚点位置不变，只把锚点时间对齐到现在，从冻结处继续走
                 mRecv = now;
@@ -833,8 +849,7 @@ final class Hud extends View {
             else chainRepeat();                            // 推来的还是同一句：可能是连着两句一模一样，按时间自己往下走
         }
         playing = newPlaying;
-        int bp = curByPos();
-        if (bp >= 0 && bp != lyrIdx) lyrIdx = bp; // 有每句时间：当前句跟播放位置走（宿主换句推送一停，只靠推送到不了就定格在第一句）
+        syncLyrIdx(); // 有每句时间：当前句跟播放位置走（宿主换句推送一停，只靠推送到不了就定格在第一句）
         invalidate();
     }
     /** 当前曲目的 trackId（拉整首歌词时做迟到校验用） */
