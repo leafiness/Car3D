@@ -101,7 +101,14 @@ public final class Hud extends View {
     private final Calendar clockCal = Calendar.getInstance();
     private long clockSec = -1;
     private boolean clockH24, clockShowSec;
-    private String clockTime = "", clockDate = "", clockRef = "";
+    private     String clockTime = "", clockDate = "", clockRef = "";
+
+    /** 歌词滚动：lyrShown 是显示位置（浮点，动画中间态），lyrAnimating 供 clockTick 决定要不要 60fps 重绘 */
+    private float lyrShown = Float.NaN;
+    private boolean lyrAnimating;
+    /** 歌词物理行缓存：只依赖「内容 + 折行宽度 + 当前句字号 + 行数」，别每帧把整首重排一遍 */
+    private List<String> lpSrc; private int lpN, lpRows; private float lpW, lpFont = -1;
+    private List<String> lpPhys; private List<Integer> lpOwner; private int[] lpFirst;
 
     // 时钟：顶栏每秒刷新（让秒数走动）
     private final Handler clockH = new Handler(Looper.getMainLooper());
@@ -111,7 +118,12 @@ public final class Hud extends View {
         //   曾经在这里每 200ms 也同步一次索引，结果和 setMedia 形成两条时间线：一边按宿主推的句子定位、
         //   一边按播放位置算，两边差一句就互相覆盖，表现就是歌词高频前后跳。
         invalidate();
-        clockH.postDelayed(clockRun, (musicOn && playing) ? 200 : 1000);
+        // 重绘节奏：歌词滚动动画期间 16ms（要连续帧才顺）；第三页不画 Hud，1s 足够；其余按播放态 200/1000ms
+        long d;
+        if (pageIdx == 2) d = 1000;
+        else if (lyrAnimating) d = 16;
+        else d = (musicOn && playing) ? 200 : 1000;
+        clockH.postDelayed(clockRun, d);
     }
 
     /** 按播放位置对齐当前句（只在 setMedia / ctlPos 这些"收到权威数据"的时机调用） */
@@ -168,9 +180,38 @@ public final class Hud extends View {
         themeAnim.addUpdateListener(a -> { palette((Float) a.getAnimatedValue()); invalidate(); if (each != null) each.run(); });
         themeAnim.start();
     }
-    void setTop(String g, boolean on, String s, String pw, boolean lv) { gear = g; speedOn = on; speed = s; power = pw; live = lv; invalidate(); }
-    void setStats(List<String[]> l) { stats = l; invalidate(); }
-    void setStatus(List<CarPage.St> l, boolean open) { status = l; stOpen = open; invalidate(); }
+    void setTop(String g, boolean on, String s, String pw, boolean lv) {
+        // 内容没变就别重画：车况推送 1~5Hz，每次推送都整屏重绘（含两张全屏层）纯属白烧
+        if (java.util.Objects.equals(g, gear) && on == speedOn && java.util.Objects.equals(s, speed)
+            && java.util.Objects.equals(pw, power) && lv == live) return;
+        gear = g; speedOn = on; speed = s; power = pw; live = lv; invalidate();
+    }
+    void setStats(List<String[]> l) { if (sameRows(stats, l)) return; stats = l; invalidate(); }
+    void setStatus(List<CarPage.St> l, boolean open) {
+        if (open == stOpen && sameStatus(status, l)) return;
+        status = l; stOpen = open; invalidate();
+    }
+    private static boolean sameRows(List<String[]> a, List<String[]> b) {
+        if (a == b) return true;
+        if (a == null || b == null || a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            String[] p = a.get(i), q = b.get(i);
+            if (p == q) continue;
+            if (p == null || q == null || p.length != q.length) return false;
+            for (int j = 0; j < p.length; j++) if (!java.util.Objects.equals(p[j], q[j])) return false;
+        }
+        return true;
+    }
+    private static boolean sameStatus(List<CarPage.St> a, List<CarPage.St> b) {
+        if (a == b) return true;
+        if (a == null || b == null || a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            CarPage.St p = a.get(i), q = b.get(i);
+            if (p == null || q == null) { if (p != q) return false; continue; }
+            if (p.lv != q.lv || !java.util.Objects.equals(p.t, q.t)) return false;
+        }
+        return true;
+    }
     private List<CarStat.Item> allTellL, allTellR; // 全量车况图标（缓存，改 tells 设置后立即重过滤）
     void setTells(List<CarStat.Item> l, List<CarStat.Item> r) {
         allTellL = l; allTellR = r; // 记住全量列表，设置改了 tells 后无需等车况数据刷新就能重过滤
@@ -261,7 +302,7 @@ public final class Hud extends View {
         // 第三页整个交给琉光：车况这一点东西都不画（顶栏、车况图标、车速、底部数据、页面提示全没有）。
         // 滑动切页时按 lgAlpha 淡出淡入，且在 GL 切换点（phase 1.5 / 2.5）正好淡到 0，不会有一层车况盖在琉光上
         float lgA = lgAlpha();
-        if (lgA <= 0.001f) return;
+        if (lgA <= 0.001f) { lyrAnimating = false; return; } // 第三页不画歌词：别让时钟一直按动画节奏重绘
         int lgSave = lgA < 0.999f ? c.saveLayerAlpha(0, 0, W, H, Math.round(255 * lgA), Canvas.ALL_SAVE_FLAG) : -1;
         // 顶栏、车况图标、车速、下面那行字在两个页面都照常显示，浮在音乐整页背景之上
         // 底部车况数据固定不动；其余元素整体随 topShift 上移（drawStats 在平移之外单独绘制）
@@ -274,7 +315,9 @@ public final class Hud extends View {
         if (k > 0.01f) {
             // layer 要覆盖真正的整屏：此时已 translate(0, topShift)，若还写 (0,0,W,H)，
             // 底部会空出 |topShift| 一条画不到音乐背景，露出下面的车模层（显成一条异色横条）
-            int s = c.saveLayerAlpha(0, -topShift, W, H - topShift, Math.round(255 * k), Canvas.ALL_SAVE_FLAG);
+            // ★k=1（停在音乐页）时不建层：alpha 已是满值，建层只是白搭一张整屏离屏缓冲
+            if (k < 0.999f) c.saveLayerAlpha(0, -topShift, W, H - topShift, Math.round(255 * k), Canvas.ALL_SAVE_FLAG);
+            else c.save();
             c.translate(cardOffPx, 0);
             drawMusicBackground(c);
             c.restore();
@@ -301,7 +344,9 @@ public final class Hud extends View {
         drawTells(c);
         drawStatus(c);
         if (k > 0.01f) { // 音乐组件（歌词/播控）：整层横移 + 淡入，组件本身无背景，直接浮在页面背景上
-            int s = c.saveLayerAlpha(0, 0, W, H, Math.round(255 * k), Canvas.ALL_SAVE_FLAG);
+            // 同上：k=1 不建层（满 alpha 的整屏离屏层没有任何作用）
+            if (k < 0.999f) c.saveLayerAlpha(0, 0, W, H, Math.round(255 * k), Canvas.ALL_SAVE_FLAG);
+            else c.save();
             c.translate(cardOffPx, 0);
             drawMusicContent(c);
             c.restore();
@@ -887,6 +932,7 @@ public final class Hud extends View {
         if (trackChanged) { // 换歌：上一首的整首歌词、累积句、当前句索引全部作废（整首歌词随后由 CarUi 重新拉）
             liveTrack = mTrackId;
             lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; liveLyrics.clear(); stopAdvance();
+            lyrShown = Float.NaN; lyrAnimating = false; // 换歌：滚动位置直接就位，别从上一首的位置滑过去
             lyrStale = prevLyric == null ? "" : prevLyric; // 换歌后宿主头几条快照常常还是上一首最后那句
         }
         if (!lyrStale.isEmpty() && !mLyric.equals(lyrStale)) lyrStale = ""; // 歌词变了：上一首那句过去了
@@ -1294,6 +1340,7 @@ public final class Hud extends View {
         return new float[] { fontPx, lh };
     }
     private void drawLyrics(Canvas c, float x, float y, float w, float h) {
+        lyrAnimating = false; // 先复位：只有真正走多行歌词那条路才可能重新置 true，避免别处残留让时钟一直高速重绘
         List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics; // 整首优先；没有就用快照逐句累积的行
         if (!all.isEmpty()) {
             int cur = lyrIdx;                                   // 用持久的当前句索引：不再每帧从 0 重扫（重复句会跳回第一次出现的位置）
@@ -1329,7 +1376,7 @@ public final class Hud extends View {
      *  整列平移把当前句送进第 above 个槽，开头贴顶、结尾贴底，窗口始终填满。
      *  当前句放大并逐字扫字高亮（已唱强调色 / 未唱主文字色），其余句缩小弱化；无时间轴则整句强调色。 */
     private void drawLyricLines(Canvas c, float x, float y, float w, float h, List<String> list, int cur) {
-        if (list.isEmpty()) return;
+        if (list.isEmpty()) { lyrAnimating = false; return; }
         int rows = 5;
         try { rows = Integer.parseInt(S.str(portrait ? "lyricLinesP" : "lyricLinesL").trim()); } catch (Exception ignored) { }
         rows = Math.max(1, Math.min(8, rows)); // 档位 1～8
@@ -1345,40 +1392,35 @@ public final class Hud extends View {
         float viewH = slot * rows;
         float viewY = y + (h - viewH) / 2f;
 
-        // 每句按「当前句最大字号」折行，保证放大后也不溢出；每个物理行占一个槽
-        List<String> phys = new ArrayList<>();
-        List<Integer> owner = new ArrayList<>();
-        int[] firstPhys = new int[list.size()];
-        p.setTypeface(ui700); p.setTextSize(curFont);
-        for (int i = 0; i < list.size(); i++) {
-            firstPhys[i] = phys.size();
-            String ln = list.get(i);
-            List<String> wl = wrapText(ln == null || ln.isEmpty() ? "♪" : ln, w);
-            for (String s : wl) { phys.add(s); owner.add(i); }
+        // 物理行布局只依赖「歌词内容 + 折行宽度 + 当前句字号 + 行数」：缓存住，别每帧把整首重排一遍
+        if (lpPhys == null || lpSrc != list || lpN != list.size() || lpW != w || lpFont != curFont || lpRows != rows) {
+            lpSrc = list; lpN = list.size(); lpW = w; lpFont = curFont; lpRows = rows;
+            lpPhys = new ArrayList<>(); lpOwner = new ArrayList<>(); lpFirst = new int[list.size()];
+            p.setTypeface(ui700); p.setTextSize(curFont);
+            for (int i = 0; i < list.size(); i++) {
+                lpFirst[i] = lpPhys.size();
+                String ln = list.get(i);
+                List<String> wl = wrapText(ln == null || ln.isEmpty() ? "♪" : ln, w);
+                for (String s : wl) { lpPhys.add(s); lpOwner.add(i); }
+            }
         }
+        List<String> phys = lpPhys;
+        List<Integer> owner = lpOwner;
+        int[] firstPhys = lpFirst;
         if (phys.isEmpty()) return;
         int curPhys = (cur >= 0 && cur < list.size()) ? firstPhys[cur] : phys.size() / 2;
 
-        // 整列平移：当前句落在第 above 个槽；钳制保证开头贴顶、结尾贴底，窗口恒有 rows 行。
-        // ★位移不做动画（与 0.8.0 一致）：这套是全屏 Canvas，每帧要重画背景/封面/歌词，
-        //   自己排 33ms 帧会和时钟的 200ms 重绘交错，实际帧间隔 33~200ms 乱跳 —— 动画忽快忽慢，看着就是抖。
-        int above = (rows - 1) / 2;
-        float shift = (above - curPhys) * slot;
-        shift = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, shift));
-
-        // 当前句已唱比例：整首歌词带时间戳时按「本句起点 → 下一句起点」线性推进；拿不到就整句强调色
-        float sung = -1f;
-        if (!lyrics.isEmpty() && cur >= 0 && cur < lyrTimes.size()) {
-            long st = lyrTimes.get(cur), en = -1;
-            for (int j = cur + 1; j < lyrTimes.size(); j++) {
-                long t = lyrTimes.get(j);
-                if (t >= 0) { en = t; break; }
-            }
-            if (st >= 0 && en > st) {
-                sung = (float) (livePos() - st) / (float) (en - st);
-                if (sung < 0f) sung = 0f; else if (sung > 1f) sung = 1f;
-            }
+        // 整列平移 + 平滑滚动：显示位置向当前句指数逼近（每帧 30%），不是一步跳过去。
+        // 换歌/跳句距离过大时直接就位，免得跨十几行慢慢滑；lyrAnimating 让时钟在滚动期间按 16ms 重绘。
+        if (Float.isNaN(lyrShown) || Math.abs(curPhys - lyrShown) > rows * 1.5f) lyrShown = curPhys;
+        else {
+            float ld = curPhys - lyrShown;
+            if (Math.abs(ld) < 0.02f) lyrShown = curPhys; else lyrShown += ld * 0.30f;
         }
+        lyrAnimating = Math.abs(curPhys - lyrShown) > 0.02f;
+        int above = (rows - 1) / 2;
+        float shift = (above - lyrShown) * slot;
+        shift = Math.max(Math.min(0f, viewH - phys.size() * slot), Math.min(0f, shift));
 
         int clip = c.save();
         c.clipRect(x, viewY, x + w, viewY + viewH); // ★ 窗口高度 = 槽高 × N：裁出恰好 N 行
@@ -1388,7 +1430,7 @@ public final class Hud extends View {
         int layer = fade ? c.saveLayer(x, viewY, x + w, viewY + viewH, null, Canvas.ALL_SAVE_FLAG) : -1;
         p.setTextAlign(Paint.Align.CENTER);
         int accL = coverAccent(); // 封面衍生强调色
-        float curCy = viewY + (curPhys + 0.5f) * slot + shift; // 当前句实际所在的槽中心：样式以它为中心
+        float curCy = viewY + (lyrShown + 0.5f) * slot + shift; // 跟随显示位置：滚动途中透明度一起走
         float halfRows = Math.max(1f, rows * 0.55f);
         for (int i = 0; i < phys.size(); i++) {
             float cy = viewY + (i + 0.5f) * slot + shift;
@@ -1399,22 +1441,10 @@ public final class Hud extends View {
             float dLine = Math.abs(owner.get(i) - (cur >= 0 ? cur : owner.get(i)));
             float kFont = Math.min(1f, dLine / 2f);
             float kA = Math.min(1f, Math.abs(cy - curCy) / slot / halfRows);
-            if (isCur) {
+            if (isCur) { // 当前句整句强调色（去掉逐字扫光：每帧切片 + 两次绘制，且比例算偏还会让人误以为卡住）
                 p.setTypeface(ui700); p.setTextSize(curFont);
-                float by = baseline(cy, p);
-                if (sung >= 0f && txt.length() > 1) {
-                    // 逐字扫字：折行后的每个物理行按同一比例切分
-                    int cut = Math.max(1, Math.min(txt.length() - 1, Math.round(txt.length() * sung)));
-                    String done = txt.substring(0, cut), rest = txt.substring(cut);
-                    p.setTextAlign(Paint.Align.LEFT);
-                    float sx = x + w / 2f - p.measureText(txt) / 2f;
-                    p.setColor(accL); c.drawText(done, sx, by, p);
-                    p.setColor(ink); c.drawText(rest, sx + p.measureText(done), by, p);
-                    p.setTextAlign(Paint.Align.CENTER);
-                } else {
-                    p.setColor(accL);
-                    c.drawText(txt, x + w / 2, by, p);
-                }
+                p.setColor(accL);
+                c.drawText(txt, x + w / 2, baseline(cy, p), p);
             } else {
                 p.setTypeface(ui500); p.setTextSize(fontPx * (1.05f - 0.17f * kFont));
                 p.setColor(withA(mute, 0.62f - 0.44f * kA));

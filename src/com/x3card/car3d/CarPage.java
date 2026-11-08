@@ -2323,6 +2323,8 @@ final class CarPage implements Stage.Page {
         if (firstOpen) { firstOpen = false; s = "打开：进程启动后 " + (android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()) + " 毫秒画出车；" + s; }
         Log.w("car3d", s);
     }
+    /** 上一帧推给界面的标签快照：坐标/状态没变就不重复推（车静止时每帧 4 个数组 + 跨线程投递 + 整层重画全是白烧） */
+    private float[] lastTagXY; private String[] lastTagCls; private String[] lastTyreText; private String[] lastTyreTemp;
     @Override public void after() {
         if (opening && root != null) openDone();
         importDone();
@@ -2341,7 +2343,12 @@ final class CarPage implements Stage.Page {
             tagXY[wh.idx * 2] = (pv.x + 1) / 2 * W;
             tagXY[wh.idx * 2 + 1] = Math.min((1 - pv.y) / 2 * H + rm * 0.38f, lim);
         }
-        out.tyres(tagXY.clone(), tagCls.clone(), tyreText.clone(), tyreTemp.clone());
+        // 只有真的变了才推：标签位置/状态没动时，每帧 4 个数组克隆 + 一次主线程投递 + 一次整层 invalidate 都是白烧
+        if (lastTagXY == null || !java.util.Arrays.equals(lastTagXY, tagXY) || !java.util.Arrays.equals(lastTagCls, tagCls)
+            || !java.util.Arrays.equals(lastTyreText, tyreText) || !java.util.Arrays.equals(lastTyreTemp, tyreTemp)) {
+            lastTagXY = tagXY.clone(); lastTagCls = tagCls.clone(); lastTyreText = tyreText.clone(); lastTyreTemp = tyreTemp.clone();
+            out.tyres(tagXY.clone(), tagCls.clone(), tyreText.clone(), tyreTemp.clone());
+        }
     }
     /** 界面量好下面那行字的上沿（标签下沿最多到它：同网页版，往上让 0.22rem） */
     void setTagMax(float y) { tagMax = app != null ? y - app.rem() * 0.22f : y; }

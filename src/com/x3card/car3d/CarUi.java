@@ -317,7 +317,7 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         if (url.isEmpty()) {
             covSeq++; covUrl = ""; covTid = ""; coverHash = Long.MIN_VALUE; hashTid = ""; coverFailCount = 0;
             if (coverRetry != null) { main.removeCallbacks(coverRetry); coverRetry = null; }
-            hud.setCover(null); // 占位
+            // 不立刻清空封面：换歌瞬间先留着上一张，等新封面真正取到再一起换（否则中间会闪一下占位音符）
             return;
         }
         if (url.equals(covUrl) && tid.equals(covTid)) return; // 同歌同图：不重复加载
@@ -346,13 +346,16 @@ final class CarUi extends FrameLayout implements CarPage.Out {
             hashTid = fTid; // 等够了还一样：真是同一张（同专辑），认它属于这首
             return;
         }
-        onCover(b, h, fTid);
-        if (b != null) { // 认准后过 2s 再看一眼（宿主有时过会儿才换内容）
+        if (b != null) {
+            onCover(b, h, fTid); // 真正拿到这张封面才上屏（封面与跟随封面背景色一起切，不会先变一半）
+            // 认准后过 2s 再看一眼（宿主有时过会儿才换内容）
             final Runnable r = () -> fetchCover(++covSeq, fUrl, fTid);
             coverRetry = r; main.postDelayed(r, 2000);
-        } else if (++coverFailCount <= 6) { // 没取到：过 2s 再看（宿主可能还没准备好封面文件），最多重试几次
+        } else if (++coverFailCount <= 6) { // 没取到：先继续显示上一张，过 2s 再取（宿主可能还没准备好封面文件）
             final Runnable r = () -> fetchCover(++covSeq, fUrl, fTid);
             coverRetry = r; main.postDelayed(r, 2000);
+        } else {
+            onCover(null, 0, fTid); // 重试用尽仍取不到：这时才清掉，免得一直挂着上一首的封面
         }
     }
     /** 把一张确认过的封面送进画布（同时记它对应的曲目与内容指纹） */
