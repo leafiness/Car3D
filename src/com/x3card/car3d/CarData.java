@@ -324,9 +324,18 @@ final class CarData {
             } catch (Exception ignored) { }
         }
     }
+    /** 字段名 → 路径段：每推一次车况要对上百个字段各 split 一次，按名字缓存（覆盖运行时 extra，不能只做静态表） */
+    private static final Map<String, String[]> PATHS = new HashMap<>();
+    private static String[] path(String k) {
+        synchronized (PATHS) {
+            String[] p = PATHS.get(k);
+            if (p == null) { p = k.split("\\."); PATHS.put(k, p); }
+            return p;
+        }
+    }
     /** 从合并后的业务树里取一个字段、解码；没有有效数据返回 null（同 fromTree） */
     private Object fromTree(String k) {
-        String[] parts = k.split("\\.");
+        String[] parts = path(k);
         JSONObject node = tree;
         for (int i = 0; i < parts.length - 1 && node != null; i++) node = node.optJSONObject(parts[i]);
         if (node == null) return null;
@@ -367,7 +376,7 @@ final class CarData {
     private void onSys(JSONObject d) {
         merge(stree, d);
         for (String k : SYS) {
-            String[] p = k.split("\\.");
+            String[] p = path(k);
             JSONObject n = stree.optJSONObject(p[0]);
             Object v = n == null ? null : n.opt(p[1]);
             if (v == null || v == JSONObject.NULL) sys.remove(k); else sys.put(k, v instanceof Number ? (Object) ((Number) v).doubleValue() : v);

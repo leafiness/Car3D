@@ -84,10 +84,8 @@ final class Overlay extends View {
         num500 = outfit(c, 500);
     }
 
-    static Typeface outfit(Context c, int w) {
-        try { return new Typeface.Builder(c.getAssets(), "Outfit.ttf").setFontVariationSettings("'wght' " + w).build(); }
-        catch (Exception e) { return Typeface.create(Typeface.DEFAULT, w, false); }
-    }
+    /** 与 Hud 共用同一份字体缓存：Outfit 同一个 weight 整进程只解析一次 */
+    static Typeface outfit(Context c, int w) { return com.ljone.car3d.Hud.outfit(c, w); }
 
     static int mix(int a, int b, float k) {
         int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255, ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;

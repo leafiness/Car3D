@@ -35,7 +35,7 @@ import android.os.SystemClock;
  * 尺寸按 CSS 像素 × 密度（1rem = 高度 / 10.52）。只有可点的地方接手势，别处交给下面的 3D 画布
  */
 @SuppressLint("ViewConstructor")
-final class Hud extends View {
+public final class Hud extends View {
     interface Tap { void status(); void pick(int i); void all(); void close(); void debug(); void card(boolean fromRight); void pageTo(int idx); void music(String a); void launchApp(); }
 
     // 浅色 / 深色（同 CSS 变量）：ink、mute、line、chip、ok、warn、bad、info
@@ -95,6 +95,14 @@ final class Hud extends View {
     float msgTop;
     Runnable onMsgTop;
 
+    /** 空白折叠正则：原来每次 clean() 里 replaceAll 都要重新编译一遍 */
+    private static final java.util.regex.Pattern WS = java.util.regex.Pattern.compile("\\s+");
+    /** 顶栏时钟：日历与时间串按秒复用（播放中 200ms 重绘一次，一秒要建 5 遍） */
+    private final Calendar clockCal = Calendar.getInstance();
+    private long clockSec = -1;
+    private boolean clockH24, clockShowSec;
+    private String clockTime = "", clockDate = "", clockRef = "";
+
     // 时钟：顶栏每秒刷新（让秒数走动）
     private final Handler clockH = new Handler(Looper.getMainLooper());
     private final Runnable clockRun = this::clockTick;
@@ -126,9 +134,16 @@ final class Hud extends View {
         clockH.post(clockRun);
     }
     @Override protected void onDetachedFromWindow() { clockH.removeCallbacks(clockRun); super.onDetachedFromWindow(); }
-    static Typeface outfit(Context c, int w) {
-        try { return new Typeface.Builder(c.getAssets(), "Outfit.ttf").setFontVariationSettings("'wght' " + w).build(); }
-        catch (Exception e) { return Typeface.create(Typeface.DEFAULT, w, false); }
+    /** 同一 weight 只解析一次 TTF：构造期原来每个 weight 各 new 一个 Builder 重新解析 110KB 字体 */
+    private static final java.util.HashMap<Integer, Typeface> FACES = new java.util.HashMap<>();
+    public static synchronized Typeface outfit(Context c, int w) {
+        Typeface t = FACES.get(w);
+        if (t != null) return t;
+        try { t = new Typeface.Builder(c.getAssets(), "Outfit.ttf").setFontVariationSettings("'wght' " + w).build(); }
+        catch (Exception e) { t = null; }
+        if (t == null) t = Typeface.create(Typeface.DEFAULT, w, false); // 字体缺失/解析失败：退回系统字体，别把 null 塞进缓存
+        FACES.put(w, t);
+        return t;
     }
     private static int mix(int a, int b, float k) {
         int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255, ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
@@ -377,24 +392,31 @@ final class Hud extends View {
     
     /** 顶栏左端（与右侧系统图标同一行）：时间加粗在前、日期（M月d日）同行；支持 24/12 小时制与秒 */
     private float drawClock(Canvas c, float left, float cy) {
-        Calendar now = Calendar.getInstance();
         boolean h24 = S.bool("hour24");
         boolean sec = S.bool("showSec") && !(S.bool("secHideNarrow") && portrait);
-        int h = now.get(Calendar.HOUR_OF_DAY), m = now.get(Calendar.MINUTE), s = now.get(Calendar.SECOND);
-        String ampm = "";
-        if (!h24) { boolean am = h < 12; h = h % 12; if (h == 0) h = 12; ampm = am ? " AM" : " PM"; }
-        String time = (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + (sec ? ":" + (s < 10 ? "0" : "") + s : "") + ampm;
-        String date = (now.get(Calendar.MONTH) + 1) + "月" + now.get(Calendar.DAY_OF_MONTH) + "日";
+        // 时间串一秒才变一次，日历与字符串都复用；12/24 制与秒开关变化同样要重建
+        long tick = System.currentTimeMillis() / 1000;
+        if (tick != clockSec || h24 != clockH24 || sec != clockShowSec) {
+            clockSec = tick; clockH24 = h24; clockShowSec = sec;
+            java.util.TimeZone tz = java.util.TimeZone.getDefault(); // 车机改时区后 Calendar 不会自己跟，这里顺手对齐（每秒一次，开销可忽略）
+            if (!clockCal.getTimeZone().equals(tz)) clockCal.setTimeZone(tz);
+            clockCal.setTimeInMillis(tick * 1000);
+            int h = clockCal.get(Calendar.HOUR_OF_DAY), m = clockCal.get(Calendar.MINUTE), s = clockCal.get(Calendar.SECOND);
+            String ampm = "";
+            if (!h24) { boolean am = h < 12; h = h % 12; if (h == 0) h = 12; ampm = am ? " AM" : " PM"; }
+            clockTime = (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + (sec ? ":" + (s < 10 ? "0" : "") + s : "") + ampm;
+            clockDate = (clockCal.get(Calendar.MONTH) + 1) + "月" + clockCal.get(Calendar.DAY_OF_MONTH) + "日";
+            clockRef = "88:88" + (sec ? ":88" : "") + ampm;
+        }
         p.setTypeface(num700); p.setTextSize(r(portrait ? 0.30f : 0.42f)); p.setColor(ink);
         // 固定时间槽宽：Outfit 是比例字体（数字 1 与 0 等宽度不同），直接按时间实测宽度定位会让日期随秒/分/时数字左右跳动。
         // 改用当前格式下“最宽”的时间串（数字全用 8）测出固定槽宽，日期位置不再随数字变化而移动。
-        String ref = "88:88" + (sec ? ":88" : "") + ampm;
-        float tw = p.measureText(ref);
-        c.drawText(time, left, baseline(cy, p), p);
+        float tw = p.measureText(clockRef);
+        c.drawText(clockTime, left, baseline(cy, p), p);
         float tx = left + tw + r(0.12f);
         p.setTypeface(Typeface.DEFAULT); p.setTextSize(r(portrait ? 0.21f : 0.27f)); p.setColor(mute);
-        c.drawText(date, tx, baseline(cy, p), p);
-        return tx + p.measureText(date);
+        c.drawText(clockDate, tx, baseline(cy, p), p);
+        return tx + p.measureText(clockDate);
     }
     private float labelW(String s) { p.setTypeface(ui700); p.setTextSize(r(0.17f)); return r(0.02f) + p.measureText(s); }
     private static float baseline(float cy, Paint p) { Paint.FontMetrics m = p.getFontMetrics(); return cy - (m.ascent + m.descent) / 2; }
@@ -918,7 +940,7 @@ final class Hud extends View {
     }
     /** 宿主歌词行可能是 {"text":"...","timeMs":...} 的 JSON 串，解析出纯文本（兼容 text/content/words/lyric 几个键） */
     /** 歌词文本归一（照琉光 clean）：折叠连续空白再 trim —— 快照里的句子和整首里的同一句必须长得一样才对得上 */
-    private static String clean(String s) { return s == null ? "" : s.replaceAll("\\s+", " ").trim(); }
+    private static String clean(String s) { return s == null ? "" : WS.matcher(s).replaceAll(" ").trim(); }
     private static String lyricText(String s) {
         if (s == null) return "";
         s = clean(s);

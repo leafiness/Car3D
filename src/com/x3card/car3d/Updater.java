@@ -102,7 +102,8 @@ final class Updater {
                 if (t != null && !t.trim().isEmpty()) return t.trim();
             } catch (Exception e) {
                 Log.w(Uiplus.TAG, "拉更新日志失败（第 " + (i + 1) + " 次）：" + e.getMessage());
-                if (i < 2) { try { Thread.sleep(600); } catch (InterruptedException ignored) { } }
+                // 退避重试：固定 600ms 会让三次都落在同一段拥塞窗口里
+                if (i < 2) { try { Thread.sleep((i == 0 ? 400L : 800L) + (long) (Math.random() * 150)); } catch (InterruptedException ignored) { } }
             }
         }
         return "";

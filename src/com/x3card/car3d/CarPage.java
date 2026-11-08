@@ -1635,7 +1635,10 @@ final class CarPage implements Stage.Page {
     boolean wantsMedia() { return musicOn || cardMusic; }
     private void apply(Map<String, Object> c) {
         Object n = c.get("display.dayNightMode");
-        if (n != null) prefs.edit().putString("carDark", "night".equals(n) ? "1" : "0").apply();
+        if (n != null) { // 车况回调很密：值没变就别每次都序列化+写盘（这个值一天也就变两次）
+            String v = "night".equals(n) ? "1" : "0";
+            if (!v.equals(prefs.getString("carDark", null))) prefs.edit().putString("carDark", v).apply();
+        }
         nightData = n != null ? (Boolean) "night".equals(n) : null;
         theme(wantDark());
         Object gear = c.get("driving.gear");
