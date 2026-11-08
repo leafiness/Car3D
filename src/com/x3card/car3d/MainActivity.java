@@ -185,7 +185,10 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
             pageIdx = idx;
             p.setPageOffset(ph);
             boolean onMusic = idx == 1 && Math.abs(ph - 1f) < 0.012f && !ui.hud.dragging(); // 完全停在音乐页才停 GL
-            boolean onLg = idx == 2; // 第三页：GL 帧交给琉光 3D 场景
+            // ★离开音乐页就交给琉光，而不是等 pageIdx 变 2（相位 1.5）：
+            //   音乐页→琉光页的淡出区间是相位 1→1.5，如果这半段 GL 还画车模，
+            //   Hud 淡出后会露出一截车模（反向切回时同理）。提前交班时 Hud 还几乎不透明，看不见切换过程。
+            boolean onLg = idx == 2 || (ph > 1.02f && ph < 2f); // 第三页：GL 帧交给琉光 3D 场景
             if (lgHost != null) {
                 float d = getResources().getDisplayMetrics().density;
                 lgHost.size(view.getWidth() / d, view.getHeight() / d);
