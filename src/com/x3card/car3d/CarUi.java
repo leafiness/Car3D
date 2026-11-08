@@ -60,6 +60,7 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private String fsMode = "";
     private JSONObject mediaNow;
     private String lastTrackId = "";
+    private String lastTitle = ""; // 上一次认定的歌名：车机复用 trackId 时靠它识别换歌
     private String covUrl = "", covTid = ""; // 当前正在显示的封面地址与它对应的曲目（uiplus 规范：coverUrl 即真相，不做曲目→封面缓存）
     private int covSeq = 0;                   // 换图序号：期间又推了新地址/切了歌，旧加载结果就丢弃
     private long coverHash = Long.MIN_VALUE;  // 认准的那张封面的内容指纹（没封面/取不到时为 MIN_VALUE）
@@ -308,8 +309,11 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         // 别因为一条空号快照就重新拉整首歌词、重取封面，歌词会在这期间跳回开头。
         String raw = m.optString("trackId", "");
         String tid = !raw.isEmpty() ? raw : (!lastTrackId.isEmpty() ? lastTrackId : m.optString("title", ""));
-        boolean trackChanged = !tid.equals(lastTrackId);
-        if (trackChanged) { lastTrackId = tid; trackAt = android.os.SystemClock.uptimeMillis(); if (act != null) act.musicLyrics(); }
+        String ti = m.optString("title", "");
+        // ★车机有时复用同一个 trackId 切歌：只看号会漏掉换歌 → 不重拉歌词、不重取封面（偶现「切歌不变」）。
+        //   歌名非空且变化也算换歌；空名不算（车机瞬时报空不该清歌词）。
+        boolean trackChanged = !tid.equals(lastTrackId) || (!ti.isEmpty() && !ti.equals(lastTitle));
+        if (trackChanged) { lastTrackId = tid; lastTitle = ti; trackAt = android.os.SystemClock.uptimeMillis(); if (act != null) act.musicLyrics(); }
         String url = m.optString("coverUrl", "");
         // 换歌后宿主头一两秒给的封面常常还是上一首的（同缓存文件、内容没换，地址也一样）：
         // 取到的和上一首确认过的封面一模一样时先不用，每 0.3s 再取一次，换成新图了才算这首的；3s 还一样当真是同一张（同专辑）。
@@ -320,7 +324,7 @@ final class CarUi extends FrameLayout implements CarPage.Out {
             // 不立刻清空封面：换歌瞬间先留着上一张，等新封面真正取到再一起换（否则中间会闪一下占位音符）
             return;
         }
-        if (url.equals(covUrl) && tid.equals(covTid)) return; // 同歌同图：不重复加载
+        if (!trackChanged && url.equals(covUrl) && tid.equals(covTid)) return; // 同歌同图：不重复加载
         final int seq = ++covSeq;
         final String fUrl = url, fTid = tid;
         covUrl = url; covTid = tid; coverFailCount = 0;

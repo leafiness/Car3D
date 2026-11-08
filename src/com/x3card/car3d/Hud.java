@@ -106,9 +106,11 @@ public final class Hud extends View {
     /** 歌词滚动：lyrShown 是显示位置（浮点，动画中间态），lyrAnimating 供 clockTick 决定要不要 60fps 重绘 */
     private float lyrShown = Float.NaN;
     private boolean lyrAnimating;
-    /** 歌词物理行缓存：只依赖「内容 + 折行宽度 + 当前句字号 + 行数」，别每帧把整首重排一遍 */
-    private List<String> lpSrc; private int lpN, lpRows; private float lpW, lpFont = -1;
+    /** 歌词物理行缓存：只依赖「内容 + 折行宽度 + 当前句字号 + 行数」，别每帧把整首重排一遍。
+     *  ★必须带内容版本号：liveLyrics 是 final，换歌只做原地 clear()+add，行数相同时光看 size/引用会命中旧内容 */
+    private List<String> lpSrc; private int lpN, lpRows, lpVer = -1; private float lpW, lpFont = -1;
     private List<String> lpPhys; private List<Integer> lpOwner; private int[] lpFirst;
+    private int lyrVer; // 歌词内容版本：换歌 / 整首到达 / 逐句累积 都要 +1
 
     // 时钟：顶栏每秒刷新（让秒数走动）
     private final Handler clockH = new Handler(Looper.getMainLooper());
@@ -890,8 +892,10 @@ public final class Hud extends View {
         boolean textChanged = !clean(mTitle).equals(clean(prevTitle)) || !clean(mArtist).equals(clean(prevArtist));
         // ★车机偶发漏报曲目号（trackId 空）不算换歌。以前只比裸字符串，一条空号快照就把位置清 0、
         //   整首歌词全清 —— 进度跳回零、歌词跳回开头，等控制器位置和歌词拉回来才恢复，正好是报障的现象。
-        //   真正换歌：号变了，或者「一直没号、歌名/歌手变了」。
+        //   真正换歌：号变了；或歌名非空且变了（车机有时复用同一个号，只看号会漏）；或号为空但歌名/歌手变了。
+        boolean titleChanged = mTitle != null && !mTitle.isEmpty() && !clean(mTitle).equals(clean(prevTitle));
         boolean trackChanged = (!newTrack.isEmpty() && !newTrack.equals(mTrackId))
+                            || titleChanged
                             || (newTrack.isEmpty() && textChanged);
         long now = SystemClock.elapsedRealtime();
         if (trackChanged) {
@@ -932,6 +936,7 @@ public final class Hud extends View {
         if (trackChanged) { // 换歌：上一首的整首歌词、累积句、当前句索引全部作废（整首歌词随后由 CarUi 重新拉）
             liveTrack = mTrackId;
             lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; liveLyrics.clear(); stopAdvance();
+            lyrVer++; // 歌词内容变了：折行缓存的版本号一起跳，否则行数相同会沿用上一首
             lyrShown = Float.NaN; lyrAnimating = false; // 换歌：滚动位置直接就位，别从上一首的位置滑过去
             lyrStale = prevLyric == null ? "" : prevLyric; // 换歌后宿主头几条快照常常还是上一首最后那句
         }
@@ -953,6 +958,7 @@ public final class Hud extends View {
     String trackId() { return mTrackId; }
     void setLyrics(List<CarData.LyLine> l) {
         lyrics = new ArrayList<>();
+        lyrVer++; // 整首歌词换了一份：折行缓存作废
         lyrTimes = new ArrayList<>();
         if (l != null) for (CarData.LyLine ln : l) {
             if (ln == null || ln.t == null) continue;
@@ -1022,6 +1028,7 @@ public final class Hud extends View {
         } else {                                  // 没有整首：宿主只推当前句时，听到的新句子接在后面
             if (liveLyrics.isEmpty() || !t.equals(liveLyrics.get(liveLyrics.size() - 1))) {
                 liveLyrics.add(t);
+                lyrVer++; // 逐句累积：内容变了，折行缓存跟着失效（size 被 200 上限挤掉时同理）
                 if (liveLyrics.size() > 200) liveLyrics.remove(0);
             }
             lyrIdx = liveLyrics.size() - 1;
@@ -1407,8 +1414,8 @@ public final class Hud extends View {
         float viewY = y + (h - viewH) / 2f;
 
         // 物理行布局只依赖「歌词内容 + 折行宽度 + 当前句字号 + 行数」：缓存住，别每帧把整首重排一遍
-        if (lpPhys == null || lpSrc != list || lpN != list.size() || lpW != w || lpFont != curFont || lpRows != rows) {
-            lpSrc = list; lpN = list.size(); lpW = w; lpFont = curFont; lpRows = rows;
+        if (lpPhys == null || lpVer != lyrVer || lpSrc != list || lpN != list.size() || lpW != w || lpFont != curFont || lpRows != rows) {
+            lpVer = lyrVer; lpSrc = list; lpN = list.size(); lpW = w; lpFont = curFont; lpRows = rows;
             lpPhys = new ArrayList<>(); lpOwner = new ArrayList<>(); lpFirst = new int[list.size()];
             p.setTypeface(ui700); p.setTextSize(curFont);
             for (int i = 0; i < list.size(); i++) {
