@@ -1227,7 +1227,12 @@ public final class Hud extends View {
         float baseTop = (titleLines.size() > 1) ? top : top + Math.max(0f, (cov - th) / 2f); // 多行齐平封面顶、单行居中
         float blockTop = Math.min(baseTop, artistTop - th); // 别压到歌手
         blockTop = Math.max(top, blockTop);
-        for (int i = 0; i < titleLines.size(); i++) c.drawText(titleLines.get(i), tx, baseline(blockTop + r(tf) * i + r(tf) / 2f, p), p);
+        for (int i = 0; i < titleLines.size(); i++) {
+            String tl = titleLines.get(i);
+            // 换行后从第二行起在文字区内水平居中：第一行仍与封面左缘对齐，长标题不会右半边留空
+            float tlx = i == 0 ? tx : tx + Math.max(0f, (textW - p.measureText(tl)) / 2f);
+            c.drawText(tl, tlx, baseline(blockTop + r(tf) * i + r(tf) / 2f, p), p);
+        }
         p.setTypeface(ui500); p.setTextSize(r(af)); p.setColor(mute);
         c.drawText(ellipsize(mArtist, textW), tx, top + cov - p.descent() - r(0.02f), p);
         float progY = top + cov + barGap, pw = compW, px = gcx;
@@ -1292,7 +1297,12 @@ public final class Hud extends View {
         float baseTop = (titleLines.size() > 1) ? top : top + Math.max(0f, (cov - th) / 2f); // 多行齐平封面顶、单行居中
         float blockTop = Math.min(baseTop, artistTop - th); // 别压到歌手
         blockTop = Math.max(top, blockTop);
-        for (int i = 0; i < titleLines.size(); i++) c.drawText(titleLines.get(i), textLeft, baseline(blockTop + r(tf) * i + r(tf) / 2f, p), p);
+        for (int i = 0; i < titleLines.size(); i++) {
+            String tl = titleLines.get(i);
+            // 换行后从第二行起在文字区内水平居中（第一行仍贴文字区左缘）
+            float tlx = i == 0 ? textLeft : textLeft + Math.max(0f, (textW - p.measureText(tl)) / 2f);
+            c.drawText(tl, tlx, baseline(blockTop + r(tf) * i + r(tf) / 2f, p), p);
+        }
         p.setTypeface(ui500); p.setTextSize(r(af)); p.setColor(mute);
         c.drawText(ellipsize(mArtist, textW), textLeft, top + cov - p.descent() - r(0.02f), p);
         float brP = br * 1.25f; // 中间 播放/暂停 键比两侧上一首/下一首大一圈
