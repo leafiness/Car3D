@@ -242,17 +242,10 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override protected void onStart() {
         super.onStart();
         started = true;
-        // 缓存包只在「已升到该版本或更高」时才清：原来每次回前台都删，下载完切后台回来就得重下 10 MB
+        // 缓存包只在「已经很旧」时才清：读 APK 的 versionCode 要在主线程解析整个 10 MB 包（会拖慢启动），
+        // 改用文件时间——超过 7 天的残留包清掉，其余留着给用户点安装，切后台回来不用重下。
         File cached = new File(getCacheDir(), "update.apk");
-        if (cached.exists()) {
-            int my = 0, apk = -1;
-            try { my = getPackageManager().getPackageInfo(getPackageName(), 0).versionCode; } catch (Exception ignored) { }
-            try {
-                android.content.pm.PackageInfo pi = getPackageManager().getPackageArchiveInfo(cached.getAbsolutePath(), 0);
-                if (pi != null) apk = pi.versionCode;
-            } catch (Exception ignored) { }
-            if (apk <= 0 || my >= apk) cached.delete(); // 包读不出（损坏）或已经升级：清掉；否则留着直接装
-        }
+        if (cached.exists() && System.currentTimeMillis() - cached.lastModified() > 7L * 24 * 3600 * 1000) cached.delete();
         reload();
         ui.setFsMode(isFull() ? "small" : onMainScreen() ? "" : "full");
         if (lgHost != null) lgHost.setFsMode(isFull() ? "small" : onMainScreen() ? "" : "full");
