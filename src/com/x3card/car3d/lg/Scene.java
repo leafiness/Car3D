@@ -2046,7 +2046,6 @@ final class Scene implements GLSurfaceView.Renderer {
     private static final float[] BIAS = { 0.5f, 0, 0, 0, 0, 0.5f, 0, 0, 0, 0, 0.5f, 0, 0.5f, 0.5f, 0.5f, 1 };
 
     private void waterRender(float waterK, float ribK) {
-        // 水面模型矩阵每帧都要算：主画面水面也用它，而 S（设备姿态）每帧重算
         float[] local = wLocal;
         G.compose(local, 0, water, -1800, (float) (-Math.PI / 2), 0, 0, W * 4, 5300, 1);
         G.mul(waterM, S, local);
@@ -2060,11 +2059,6 @@ final class Scene implements GLSurfaceView.Renderer {
         VW[0] = WP[0]; VW[1] = WP[1]; VW[2] = WP[2];
         waterOk = dot(VW, N) <= 0;
         if (!waterOk) return;
-        // 倒影这帧不重画：texM 保持上帧（贴图和矩阵必须配套），省掉镜像相机与斜裁剪面的推导
-        boolean pgk = pages();
-        if (reflPagesWas && !pgk) reflForce = true; // 整页层刚关掉：这一帧必须重画倒影
-        reflPagesWas = pgk;
-        if (!reflForce && reflFresh && (pgk || (reflTick++ & 1) != 0)) return;
         reflect(VW, N); neg(VW); add(VW, WP);
         float[] TG = wTG; // WP − LA，LA = (0, 0, −1)
         TG[0] = WP[0]; TG[1] = WP[1]; TG[2] = WP[2] + 1;
@@ -2092,14 +2086,18 @@ final class Scene implements GLSurfaceView.Renderer {
         float sc = 2 / (CL[0] * Q4[0] + CL[1] * Q4[1] + CL[2] * Q4[2] + CL[3] * Q4[3]);
         for (int i = 0; i < 4; i++) CL[i] *= sc;
         e[2] = CL[0]; e[6] = CL[1]; e[10] = CL[2] + 1; e[14] = CL[3];
-        // 真画成了才算 fresh：上面 !waterOk 提前 return 时保持未刷，下一帧会重试
-        reflForce = false; reflFresh = true;
-        waterFbo.bind();
-        G.clearColor(0, 0, 0, 1);
-        G.depthMask(true); // 能写深度才清得掉（上一帧画透明的东西时关了）
-        G.clear(true, true);
-        drawScene(Vr, Pr, true, waterFbo.w, waterFbo.h, ribK, waterK, 0);
-        waterFbo.resolve();
+        boolean pgk = pages();
+        if (reflPagesWas && !pgk) reflForce = true; // 整页层刚关掉：这一帧必须重画倒影
+        reflPagesWas = pgk;
+        if (reflForce || !reflFresh || (!pgk && (reflTick++ & 1) == 0)) {
+            reflForce = false; reflFresh = true;
+            waterFbo.bind();
+            G.clearColor(0, 0, 0, 1);
+            G.depthMask(true); // 能写深度才清得掉（上一帧画透明的东西时关了）
+            G.clear(true, true);
+            drawScene(Vr, Pr, true, waterFbo.w, waterFbo.h, ribK, waterK, 0);
+            waterFbo.resolve();
+        }
     }
 
     private static float dot(float[] a, float[] b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
