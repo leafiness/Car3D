@@ -44,7 +44,7 @@ import javax.microedition.khronos.opengles.GL10;
  *
  * 和原版 liuguang 的差别（都是因为第三页是"借用"车况页那块画布）：
  * ① 抗锯齿、渲染方式、全屏收起状态栏改不了：画布是车况页那一块，设置页里这几行藏掉（SetPage.Data 的门控）；
- * ② 停在第三页要持续出帧（极光、浮尘、水面按 clock 走），见 Scene.resumeRender / stopRender；离页后所有出帧请求由 requestRender 的闸门吞掉。
+ * ② 停在第三页要持续出帧（极光、浮尘、水面按 clock 走），见 Scene.keepAlive。
  */
 public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     /** 交回 car3d 的（都在主线程上执行） */
@@ -67,9 +67,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     private final SongCovers covers;
     private final Handler main = new Handler(Looper.getMainLooper());
     private Ui ui;
-    private boolean created, booted, day;
-    /** 主线程改、GL 线程读（出帧闸门），必须 volatile */
-    private volatile boolean onPage;
+    private boolean created, booted, day, onPage;
     private int lastW = -1, lastH = -1, rev;
     private float cssW = 1, cssH = 1, resK = 1;
     private boolean resRecalled;
@@ -154,13 +152,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
     @Override public View view() { return glView; }
     @Override public void onPause() { }
     @Override public void onResume() { }
-    /**
-     * ★离页闸门：Scene.wake()、帧尾自续帧、rainWake 定时器、其它类的 sc.wake() 全都会走到这里。
-     * 离开第三页后一律吞掉出帧请求，让琉光彻底不再渲染；状态更新与数据链路（媒体订阅、
-     * 控制器、MediaBridge 泵、快照记账）不受影响，进页时由 pushSnapNow 一次性补齐。
-     * 车况页自己的出帧走 SceneView.requestRender，不经过这里。
-     */
-    @Override public void requestRender() { if (onPage) glView.requestRender(); }
+    @Override public void requestRender() { glView.requestRender(); }
     @Override public void queueEvent(Runnable r) { glView.queueEvent(r); }
     @Override public float cssW() { return cssW; }
     @Override public float cssH() { return cssH; }
@@ -225,7 +217,7 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         applyRes();
         if (!booted) { booted = true; scene.boot(true); }
         else scene.setOpts(st);
-        scene.resumeRender(); // 进页：恢复持续出帧，并强制整帧重画
+        scene.keepAlive(true); // 停在这一页：极光这些一直在动的效果要接着跑
         bydMedia.start();      // 媒体控制器：收藏、播放模式、音源、歌单都从这里来；连上就保持（同原版前台的口径），别在切页时反复绑/解绑
         pushSongs();
         bookArtists();
@@ -235,11 +227,10 @@ public final class LgHost implements Canvas3D, Scene.Host, Ui.Actions {
         guideLater(1500);
         scene.wake();
     }
-    /** 离开第三页：设置页收起来，停止琉光页的所有渲染（GL 画布还给车况页按需画） */
+    /** 离开第三页：设置页收起来，别再持续出帧（GL 画布要还给车况页按需画） */
     public void leavePage() {
-        onPage = false;      // 先关闸门：下面 prefs/touch 的状态照常更新，但不再发出帧请求
-        scene.stopRender();  // 清掉挂着的雨珠定时器、重置时间基线
-        main.removeCallbacks(rainCheck); // 换歌后延时复看雨珠的定时器也别留着
+        scene.keepAlive(false);
+        onPage = false;
         releaseRes(); // 画布倍率还给车况页
         scene.prefs(3); // 设置页收起来（GL 里画的，切页回来再开）
         // 连着的媒体控制器不断开（同原版：应用前台就一直连）；切页那一下的绑定/解绑是主线程上的
