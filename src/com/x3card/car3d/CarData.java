@@ -25,7 +25,7 @@ import java.util.Set;
  * 订阅失败：后端没好、超时这类一直试（2、4、8、16 秒，之后每 30 秒，同琉光原生版），别的错最多 6 次。全部在主线程上
  */
 final class CarData {
-    interface Listener { void car(Map<String, Object> car); void sys(Map<String, Object> sys); void media(JSONObject media); }
+    interface Listener { void car(Map<String, Object> car); void sys(Map<String, Object> sys); void media(JSONObject media, boolean initial); }
 
     static final List<String> FIELDS = Arrays.asList(
         "power.level", "driving.gear", "driving.speed", "display.dayNightMode",
@@ -113,6 +113,7 @@ final class CarData {
     private boolean wantCar, wantMedia;
     private String session, carId, sysId, mediaId;
     private int seq, tries, gen;
+    private boolean mediaFirst = true; // 本订阅会话的第一份媒体快照（照琉光 onMedia(m, initial)）
 
     CarData(Host host, Listener out) { this.host = host; this.out = out; }
     synchronized String unit(String k) { return units.get(k); }
@@ -156,7 +157,7 @@ final class CarData {
     void hostChanged() {
         String s = host.ready() && host.canRead() ? host.session() : null;
         if (s == null) { session = null; return; }
-        if (!s.equals(session)) { session = s; caps = null; carId = sysId = mediaId = null; tries = 0; actions.clear(); if (onActions != null) onActions.run(); }
+        if (!s.equals(session)) { session = s; caps = null; carId = sysId = mediaId = null; tries = 0; mediaFirst = true; actions.clear(); if (onActions != null) onActions.run(); }
         if (host.backendReady()) start();
     }
     private final Runnable retry = this::start;
@@ -214,7 +215,7 @@ final class CarData {
                 host.request("media.subscribe", new JSONObject().put("subscriptionId", id), (r, code, msg) -> {
                     if (!id.equals(mediaId)) return;
                     if (code != null) { mediaId = null; fail(g, code); return; }
-                    host.request("media.get", null, (m, c2, m2) -> { if (m != null) onMedia(m); });
+                    host.request("media.get", null, (m, c2, m2) -> { if (m != null) onMedia(m); }); // onMedia 内部带 initial 标记
                 });
             } catch (Exception ignored) { }
         }
@@ -232,14 +233,18 @@ final class CarData {
     void mediaCmd(String action) { try { host.request("media." + action, new JSONObject(), null); } catch (Exception ignored) { } }
     /** 主动问一次媒体快照（订阅推送不可靠时的兜底：推送一停，界面上的歌名、进度、播放态都不再更新） */
     void mediaNow() { try { host.request("media.get", null, (m, c, msg) -> { if (m != null) onMedia(m); }); } catch (Exception ignored) { } }
-    /** 拉整首歌词（行列表）；拿不到返回空列表。歌词可能迟到：结果带的 trackId 对不上当前曲目就不采用，空/过期结果间隔重试几次 */
     /** 一行歌词：文本 + 这句在整首里的开始时间（timeMs，宿主没给是 -1）。
-     *  照琉光 MediaState：有了每句时间才能「下一句和这句一模一样时按时间自己往下走」、以及按播放位置兜底定位。 */
+     *  归属、重试、正文校验全部交给 MediaState（照琉光源码），这里只负责把宿主返回解析成数据。 */
     static final class LyLine {
         final String t; final long at;
         LyLine(String t, long at) { this.t = t; this.at = at; }
     }
-    interface LyricsCb { void on(List<LyLine> lines); }
+    static final class LyrResult {
+        final String tid;
+        final List<LyLine> lines;
+        LyrResult(String tid, List<LyLine> lines) { this.tid = tid; this.lines = lines; }
+    }
+    interface LyricsCb { void on(LyrResult r); }
     /** 一行可能是 {"text":"...","timeMs":...} 的对象，也可能直接就是歌词字符串（时间未知 -1） */
     private static LyLine lineOf(JSONArray a, int i) {
         JSONObject o = a == null ? null : a.optJSONObject(i);
@@ -252,63 +257,17 @@ final class CarData {
         }
         return new LyLine(a == null ? "" : a.optString(i), -1);
     }
-    private int lyricsGen = 0; // 换歌/再次拉取会让旧的重试链作废
-    /** ★歌词归属校验：号码对 QQ 音乐不可靠（漏报/复用），改用歌词正文指纹认「这是不是上一首那份」。
-     *  lyricSig=本次已采用的整首歌词；blockSig=换歌那一刻冻结的上一首指纹，新歌歌词不许和它相同。 */
-    private String lyricSig = "", blockLyricSig = "";
-    private static String lyricSigOf(List<LyLine> l) {
-        if (l == null || l.isEmpty()) return "";
-        StringBuilder b = new StringBuilder();
-        for (int i = 0; i < l.size(); i++) {
-            LyLine ln = l.get(i);
-            if (ln != null && ln.t != null) b.append(ln.t).append('\n');
-        }
-        return b.toString();
-    }
-    void mediaLyrics(String expectTid, LyricsCb cb) {
-        int gen = ++lyricsGen;
-        fetchLyrics(expectTid == null ? "" : expectTid, cb, gen, 0);
-    }
-    private void fetchLyrics(final String expectTid, final LyricsCb cb, final int gen, final int attempt) {
+    /** 只取原始歌词，不在这里判归属：MediaState 按快照曲目、当前句、重试次数统一判。 */
+    void mediaLyrics(LyricsCb cb) {
         try { host.request("media.getLyrics", new JSONObject(), (r, code, msg) -> {
-            if (gen != lyricsGen) return; // 已有更新的拉取，这条作废
-            String rtid = r == null ? "" : r.optString("trackId", "");
-            if (rtid.equals("null")) rtid = ""; // JSONObject.NULL（宿主没给）
+            String tid = r == null ? "" : r.optString("trackId", "");
+            if ("null".equals(tid)) tid = "";
             JSONArray a = r == null ? null : r.optJSONArray("lines");
-            if (a == null && r != null) { JSONObject d = r.optJSONObject("data"); if (d != null) a = d.optJSONArray("lines"); } // 有的宿主包一层 data
+            if (a == null && r != null) { JSONObject d = r.optJSONObject("data"); if (d != null) a = d.optJSONArray("lines"); }
             List<LyLine> l = new ArrayList<>();
             for (int i = 0; a != null && i < a.length(); i++) l.add(lineOf(a, i));
-            // ★QQ 音乐切歌时宿主歌词异步解析，未就绪窗口会违反规范（规范：trackId=null 且 lines 为空），
-            //   出现「号空、lines 却是上一首缓存」。号空带歌词一律先重试，不能一次采用就定格在旧歌词。
-            //   校验基准取当前最新快照的号：QQ 切歌瞬间漏报，1~2 秒后补报，重试时就能对上，
-            //   不会拿换歌那一刻的空号（或沿用的旧号）去比，把新歌歌词误判成上一首。
-            String want = expectTid;
-            JSONObject cur = media;
-            if (cur != null) {
-                String live = cur.optString("trackId", "");
-                if (!live.isEmpty() && !"null".equals(live)) want = live;
-            }
-            boolean mismatched = !rtid.isEmpty() && !want.isEmpty() && !rtid.equals(want);
-            String sig = lyricSigOf(l);
-            // ★QQ 音乐切歌时号码可能空、也可能沿用旧号，上面那条号码校验会失效；
-            //   更硬的证据是正文：换歌时把上一首整首歌词指纹冻结，返回内容和它一字不差 = 宿主缓存没刷新，
-            //   一律判旧。这是上一轮修复漏掉的那条路。
-            boolean sameAsOld = !blockLyricSig.isEmpty() && sig.equals(blockLyricSig);
-            // 硬不可信：号明确对不上 / 正文就是上一首 / 压根没歌词 —— 重试耗尽也宁可空着，不上屏
-            boolean hard = mismatched || sameAsOld || l.isEmpty();
-            // 软不可信：号空带歌词但正文不是上一首 / 我们也没校验基准 —— 少重试几次仍可采用，
-            // 否则宿主一直不给号的音源会永远看不到歌词
-            boolean soft = rtid.isEmpty() && !l.isEmpty() && !sameAsOld;
-            boolean retry = (hard && attempt < 4) || (soft && attempt < 2);
-            if (retry) { // 歌词可能迟到，旧结果不是永久失败：间隔重试，封顶 5 秒
-                main.postDelayed(() -> fetchLyrics(expectTid, cb, gen, attempt + 1), Math.min(1200L * (attempt + 1), 5000L));
-                return;
-            }
-            if (hard) { if (cb != null) cb.on(new ArrayList<>()); return; }
-            if (cb != null) cb.on(l);
-            lyricSig = sig;
-            blockLyricSig = "";
-        }); } catch (Exception ignored) { if (gen == lyricsGen && cb != null) cb.on(new ArrayList<>()); }
+            if (cb != null) cb.on(new LyrResult(tid, l));
+        }); } catch (Exception ignored) { if (cb != null) cb.on(new LyrResult("", new ArrayList<>())); }
     }
 
     /** 封面回调：b 是位图（取不到为 null），hash 是内容指纹（取不到为 0），供调用方判断"是不是和上一首那张一模一样" */
@@ -421,7 +380,9 @@ final class CarData {
         out.sys(new LinkedHashMap<>(sys));
     }
     private void onMedia(JSONObject m) {
-        if (!"ok".equals(m.optString("status"))) { media = null; appliedTid = ""; appliedTitle = ""; appliedUa = -1; out.media(null); return; }
+        boolean initial = mediaFirst;
+        mediaFirst = false;
+        if (!"ok".equals(m.optString("status"))) { media = null; appliedTid = ""; appliedTitle = ""; appliedUa = -1; out.media(null, initial); return; }
         String tid = m.optString("trackId", "");
         if ("null".equals(tid)) tid = "";
         String ti = m.optString("title", "");
@@ -430,10 +391,8 @@ final class CarData {
         // 同一首歌才按时间戳去重，拦掉迟到的旧进度/重复包。★否则复用号切歌时新歌首帧会被吞，歌词晚一轮才动。
         boolean songChanged = !tid.equals(appliedTid) || (!ti.isEmpty() && !ti.equals(appliedTitle));
         if (!songChanged && ua > 0 && appliedUa > 0 && ua <= appliedUa) return;
-        // ★换歌：冻结上一首整首歌词指纹。QQ 音乐切歌时号码常空/复用，正文相同就成了「还是上一首」的唯一硬证据。
-        if (songChanged) blockLyricSig = lyricSig;
         media = m; appliedTid = tid; appliedTitle = ti; appliedUa = ua;
-        out.media(media);
+        out.media(media, initial);
     }
     Map<String, Object> car() { return new LinkedHashMap<>(car); }
     Map<String, Object> sys() { return new LinkedHashMap<>(sys); }

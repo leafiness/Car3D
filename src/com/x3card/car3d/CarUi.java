@@ -61,7 +61,6 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private JSONObject mediaNow;
     private String lastTrackId = "";
     private String lastTitle = ""; // 上一次认定的歌名：车机复用 trackId 时靠它识别换歌
-    private String lyricExpectTid = ""; // 本轮拉歌词用的「快照原始曲目号」（可为空），不能用沿用号做严格比对
     private String covUrl = "", covTid = ""; // 当前正在显示的封面地址与它对应的曲目（uiplus 规范：coverUrl 即真相，不做曲目→封面缓存）
     private int covSeq = 0;                   // 换图序号：期间又推了新地址/切了歌，旧加载结果就丢弃
     private long coverHash = Long.MIN_VALUE;  // 认准的那张封面的内容指纹（没封面/取不到时为 MIN_VALUE）
@@ -75,12 +74,12 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private boolean cardOn;
     private boolean blocked; // 连不上宿主/未授权：胎压标签随相位计算时强制藏掉
 
-    CarUi(Context c, Settings s, Actions a) {
+    CarUi(Context c, Settings s, Actions a, CarData d) {
         super(c);
         act = a;
         S = s;
         dens = c.getResources().getDisplayMetrics().density;
-        hud = new Hud(c, S, new Hud.Tap() {
+        hud = new Hud(c, S, d, new Hud.Tap() {
             @Override public void status() { act.statusTap(); }
             @Override public void pick(int i) { act.statusPick(i); }
             @Override public void all() { act.allStatus(); }
@@ -300,9 +299,9 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     @Override public void acSet(boolean on) { main.post(() -> act.acSet(on)); }
     @Override public void progress(String step, float f) { main.post(() -> busy.progress(step, f)); }
     @Override public void imported(String msg) { main.post(() -> { busy.hide(); showToast(msg, msg.length() > 40 ? 8000 : 4000); }); }
-    /** 媒体快照（主线程）：交给 Hud 画音乐卡片；换歌了去拉整首歌词、换封面 */
-    @Override public void media(JSONObject m) { main.post(() -> {
-        hud.setMedia(m);
+    /** 媒体快照（主线程）：交给 Hud 画音乐卡片；歌词和位置由 MediaState 统一判定 */
+    public void media(JSONObject m, boolean initial) { main.post(() -> {
+        hud.setMedia(m, initial);
         // ★媒体会话挂起（接蓝牙电话）不是换歌：不动曲目、不重拉歌词、不清封面，保留上一首。
         //   以前这里把 lastTrackId 清成空并把封面清掉，会话一恢复就当成全新曲目重来一遍。
         if (m == null) return;
@@ -310,13 +309,12 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         // 别因为一条空号快照就重新拉整首歌词、重取封面，歌词会在这期间跳回开头。
         String raw = m.optString("trackId", "");
         if ("null".equals(raw)) raw = "";
-        lyricExpectTid = raw; // 每帧都更新：宿主切歌后补报号时，歌词校验要用最新号而不是换歌那一刻的空号
         String tid = !raw.isEmpty() ? raw : (!lastTrackId.isEmpty() ? lastTrackId : m.optString("title", ""));
         String ti = m.optString("title", "");
         // ★车机有时复用同一个 trackId 切歌：只看号会漏掉换歌 → 不重拉歌词、不重取封面（偶现「切歌不变」）。
         //   歌名非空且变化也算换歌；空名不算（车机瞬时报空不该清歌词）。
         boolean trackChanged = !tid.equals(lastTrackId) || (!ti.isEmpty() && !ti.equals(lastTitle));
-        if (trackChanged) { lastTrackId = tid; lastTitle = ti; trackAt = android.os.SystemClock.uptimeMillis(); if (act != null) act.musicLyrics(); }
+        if (trackChanged) { lastTrackId = tid; lastTitle = ti; trackAt = android.os.SystemClock.uptimeMillis(); }
         String url = m.optString("coverUrl", "");
         // 换歌后宿主头一两秒给的封面常常还是上一首的（同缓存文件、内容没换，地址也一样）：
         // 取到的和上一首确认过的封面一模一样时先不用，每 0.3s 再取一次，换成新图了才算这首的；3s 还一样当真是同一张（同专辑）。
@@ -334,6 +332,8 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         if (coverRetry != null) { main.removeCallbacks(coverRetry); coverRetry = null; }
         if (act != null) fetchCover(seq, fUrl, fTid); // 下完才上屏；期间又换了就丢弃
     }); }
+    /** CarPage 从 GL 线程转回来的通知：Hud 已在主线程处理过同一份快照，这里不再重复走状态机 */
+    @Override public void media(JSONObject m) { }
 
     /** 取封面（带序号，过期结果丢弃）；到货后走 onCoverArrived 决定要不要上屏/要不要重取 */
     private void fetchCover(int seq, String fUrl, String fTid) {
@@ -371,11 +371,6 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         hashTid = fTid;
         hud.setCover(b);
     }
-    /** 歌词校验用的原始曲目号：宿主漏报号时为空，不能拿沿用号去比对，否则新歌歌词会被当成上一首丢掉 */
-    String lyricExpectTid() { return lyricExpectTid; }
-
-    /** 整首歌词（行列表） */
-    void setLyrics(List<CarData.LyLine> l) { main.post(() -> hud.setLyrics(l)); }
     /** 一打开就用对深浅色（不渐变） */
     void darkNow(boolean d) { darkTo = d; hud.setDark(d, false, null); colors(); }
     boolean darkTo() { return darkTo; }

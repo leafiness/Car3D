@@ -92,7 +92,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         data.onActions = this::acOk;
         tro = new Trophies(this, link(), host instanceof DebugHost);
         root = new FrameLayout(this);
-        ui = new CarUi(this, S, this);
+        ui = new CarUi(this, S, this, data);
         info = new InfoView(this, w -> { if ("auth".equals(w)) authorize(); });
         newScene();
         root.addView(info, new FrameLayout.LayoutParams(-1, -1));
@@ -737,8 +737,8 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     @Override public void music(String action) { data.mediaCmd(action); }
     /** 封面：coverUrl 是会话绑定的资源标识，走 openCover（不是 HTTP 下载），解码完回调（由调用方用序号丢弃过期结果） */
     @Override public void loadCover(String url, CarData.CoverCb cb) { data.loadCover(url, cb); }
-    /** 换歌了拉整首歌词 */
-    @Override public void musicLyrics() { data.mediaLyrics(ui.lyricExpectTid(), l -> ui.setLyrics(l)); }
+    /** 换歌 / 进页了拉整首歌词：归属、重试、当前句定位都在 MediaState 里判，这里只发指令 */
+    @Override public void musicLyrics() { ui.hud.fetchLyrics(); }
 
     // ================= 点封面：打开正在放歌的那个 App =================
     /** 点封面打开音源 App：宿主原生动作 apps.launch（参数是包名）。
@@ -857,5 +857,9 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
         }
     }
     @Override public void sys(Map<String, Object> s) { final CarPage p = page; view.queueEvent(() -> p.setSys(s)); }
-    @Override public void media(JSONObject m) { final CarPage p = page; view.queueEvent(() -> p.setMedia(m)); }
+    @Override public void media(JSONObject m, boolean initial) {
+        ui.media(m, initial);
+        final CarPage p = page;
+        view.queueEvent(() -> p.setMedia(m));
+    }
 }

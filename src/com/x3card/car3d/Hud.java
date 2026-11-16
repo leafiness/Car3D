@@ -48,6 +48,7 @@ public final class Hud extends View {
     private final float dens;
     private final Tap tap;
     private final Settings S;
+    private final CarData data;
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), sp = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Typeface num300, num500, num700, ui500, ui600, ui700;
     private float rem = 10;
@@ -135,10 +136,11 @@ public final class Hud extends View {
         if (bp >= 0) lyrIdx = bp;
     }
 
-    Hud(Context c, Settings s, Tap tap) {
+    Hud(Context c, Settings s, CarData d, Tap tap) {
         super(c);
         this.tap = tap;
         this.S = s;
+        this.data = d;
         dens = c.getResources().getDisplayMetrics().density;
         num300 = outfit(c, 300); num500 = outfit(c, 500); num700 = outfit(c, 700);
         ui500 = Typeface.create(Typeface.DEFAULT, 500, false);
@@ -275,11 +277,21 @@ public final class Hud extends View {
     private float lyrMaskKey;     // 遮罩缓存的尺寸键
     private String lyrLine = "";  // 当前显示的句子（判断宿主推来的句子有没有换）
     private String lyrStale = ""; // 换歌时上一首留下的那句：宿主换歌后头几条快照常常还是它，照琉光 lyr.stale 挡掉
-    /** ★换歌后的逐句歌词冻结窗口：lyrStale 只挡得住「上一首最后一句」，QQ 切歌会连推好几条上一首残留，
-     *  其余句子会被 setLine() 累积进 liveLyrics 直接显示成上一首。整首歌词到齐（或超时兜底）前一律不累积。 */
-    private long lyrHoldUntil = 0;
+    /** 换歌后的歌词归属窗口：照琉光 MediaState.newTrack/lyricOk，整首没到时先压着最多 6 秒，
+     *  有整首时只认「时间对得上或按顺序接上下一句」的句子，超时才按听到的句子兜底。 */
+    private long lyrStart = -1, lyrHoldUntil;
+    private String lyrHold = ""; private int lyrHoldIdx = -2;
+    private boolean lyrNoFull;
+    /** 换歌后 10 秒内，上一首整首里出现过的句子一律不按「听到的新句」上屏（QQ 宿主会连推残留句）。 */
+    private final java.util.HashSet<String> oldLyricLines = new java.util.HashSet<>();
+    private long oldLyricBlockUntil;
+    private int lyrTries, lyrMisses;
+    private long lyrAsked;
+    private int lyricsGen; // 换歌 / 再次拉取会让旧的歌词重试回调作废
+    private Runnable lyrRetry; // 整首歌词迟到重试（琉光 loadLyrics）
     private Runnable lyrAdvance;  // 连着两句一模一样时按时间自己往下走（琉光 chainRepeat）
-    private String liveTrack = "", mTrackId = "";
+    private String liveTrack = "", mTrackId = "", mTrackRaw = ""; // mTrackRaw 是快照原始号，归属校验不能沿用认定号
+    private static final String MEDIA_CENTER = "com.byd.mediacenter"; // 和琉光 Player.PKG 一致
     private float tellBottom, speedBottom, statusTop, tellLw, tellRw; // 音乐卡片要避开的其他区域几何（每帧随画更新）
     private final Paint bp = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
     private final RectF statsR = new RectF(), cardR = new RectF();
@@ -864,144 +876,183 @@ public final class Hud extends View {
         });
         offAnim.start();
     }
-    /** 媒体快照（宿主每次推来的播放状态，含当前句歌词）。照琉光 MediaState 的播放位置做法：
-     *  宿主的 positionMs 只在开始 / 暂停 / 拖进度时可靠更新，平时（尤其每换一句歌词推一次）常常不带位置或带 0；
-     *  所以位置用「锚点」记：收到真实、变化的位置才重锚定，之后按经过的墙钟时间往后推，不随换句清空。 */
-    void setMedia(JSONObject m) {
+    void setMedia(JSONObject m) { setMedia(m, false); }
+    /** 媒体快照统一入口（照琉光 MediaState.onMedia）：一首歌一份状态，逐句、整首、位置都在这里判。
+     *  宿主的 positionMs 只在开始 / 暂停 / 拖进度时可靠，平时（尤其换句推送）常常是 0 或旧值；
+     *  所以只在这里重锚定，渲染和时钟只按锚点 + 经过时间走。 */
+    void setMedia(JSONObject m, boolean initial) {
         if (m == null) {
             if (!mHadMedia) { // 从没播过歌：直接空白
-                mTitle = mArtist = mLyric = mCover = null; mPos = mDur = 0; mRecv = 0; mPosReported = -1; posSet = false; posTrust = false; playing = false; mTrackId = ""; mPkg = ""; liveLyrics.clear(); lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lastCur = 0; lyrLine = ""; lyrStale = ""; stopAdvance(); coverBm = null; invalidate(); return;
+                mTitle = mArtist = mLyric = mCover = null; mPos = mDur = 0; mRecv = 0; mPosReported = -1; posSet = false; posTrust = false; playing = false;
+                mTrackId = ""; mTrackRaw = ""; mPkg = ""; liveLyrics.clear(); lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lastCur = 0;
+                lyrLine = ""; lyrStale = ""; lyrStart = -1; stopAdvance(); cancelLyrRetry(); coverBm = null; invalidate(); return;
             }
             // 播过歌但此刻媒体为空：常是接蓝牙电话时宿主把媒体会话挂起（status 不再是 ok）。保留上一首的歌名/封面/进度，只冻结播放态，不空白。
-            // ★曲目号和位置锚点也一起留着：以前这里把 mTrackId 清空、mPosReported 置 -1，会话恢复后第一条快照
-            //   必然被判成「换歌」→ 位置清零、整首歌词清空，正是「进度跳回零 / 歌词跳回开头再回当前句」的触发点。
             playing = false; lyrStale = ""; invalidate(); return;
         }
         mHadMedia = true;
         bridge.seen(); // 收到新快照：补问的计时归零
-        String prevTitle = mTitle, prevArtist = mArtist; // 换歌判定要拿「上一条快照」的歌名比
-        String prevLyric = mLyric; // 换歌前那句（下面 trackChanged 时记为「上一首残留的那句」）
+        String prevTitle = mTitle, prevArtist = mArtist, prevLyric = mLyric;
+        long now = SystemClock.elapsedRealtime();
         mTitle = m.optString("title", ""); mArtist = m.optString("artist", "");
         mLyric = lyricText(m.optString("lyric", "")); mCover = m.optString("coverUrl", "");
-        mPkg = m.optString("packageName", ""); // 放歌的 App：点封面要靠它打开
-        if ("null".equals(mPkg)) mPkg = "";   // 宿主给的是 JSONObject.NULL 时 optString 会返回 "null"
+        mPkg = m.optString("packageName", "");
+        if ("null".equals(mPkg)) mPkg = "";
         long newDur = m.optLong("durationMs");
-        boolean hasPos = m.has("positionMs") && !m.isNull("positionMs");   // 这条快照到底带没带位置（不带位置=纯换句推送）
+        boolean hasPos = m.has("positionMs") && !m.isNull("positionMs");
         long newPos = hasPos ? m.optLong("positionMs") : -1;
-        boolean newPlaying = m.optBoolean("playing");
-        boolean wasPlaying = playing; // 上一帧的播放态（playing 字段在本方法末尾才被新值覆盖）
-        String newTrack = m.optString("trackId", "");
-        if ("null".equals(newTrack)) newTrack = "";
+        boolean newPlaying = m.optBoolean("playing"), wasPlaying = playing;
+        String newTid = m.optString("trackId", "");
+        if ("null".equals(newTid)) newTid = "";
         boolean textChanged = !clean(mTitle).equals(clean(prevTitle)) || !clean(mArtist).equals(clean(prevArtist));
-        // ★车机偶发漏报曲目号（trackId 空）不算换歌。以前只比裸字符串，一条空号快照就把位置清 0、
-        //   整首歌词全清 —— 进度跳回零、歌词跳回开头，等控制器位置和歌词拉回来才恢复，正好是报障的现象。
-        //   真正换歌：号变了；或歌名非空且变了（车机有时复用同一个号，只看号会漏）；或号为空但歌名/歌手变了。
-        boolean titleChanged = mTitle != null && !mTitle.isEmpty() && !clean(mTitle).equals(clean(prevTitle));
-        boolean trackChanged = (!newTrack.isEmpty() && !newTrack.equals(mTrackId))
-                            || titleChanged
-                            || (newTrack.isEmpty() && textChanged);
-        long now = SystemClock.elapsedRealtime();
+        boolean titleChanged = !mTitle.isEmpty() && !clean(mTitle).equals(clean(prevTitle));
+        // 空号不算换歌；号变了、歌名变了（复用号）、或空号但歌手/歌名都变了才算。认定号照旧沿用，只把原始号更新用于歌词归属。
+        boolean trackChanged = (!newTid.isEmpty() && !newTid.equals(mTrackId)) || titleChanged || (newTid.isEmpty() && textChanged);
         if (trackChanged) {
-            // 真换歌：位置从宿主给的值起算；没给（或给了 0）就先记 0，标「未确认」，
-            // 等媒体控制器的第一条真实位置无条件对齐（见 ctlPos）。
             mPos = hasPos && newPos > 0 ? newPos : 0;
-            mRecv = now;
-            posSet = true;
-            posTrust = false;
-            lastCtlAt = 0; // 让下一条控制器位置立刻生效，别被「控制器活跃」窗口挡掉
+            mRecv = now; posSet = true; posTrust = false; lastCtlAt = 0;
         } else if (hasPos) {
-            boolean posChanged = newPos != mPosReported; // 宿主这次上报的位置和上次不一样
+            boolean posChanged = newPos != mPosReported;
             if (wasPlaying && !newPlaying && posSet) {
-                // 暂停：把锚点位置对齐到「当前实时播放位置」，冻结的是准确位置（照琉光 anchor(pos())，不再卡在最后一次上报的位置）
-                mPos = livePos(); mRecv = now;
+                mPos = livePos(); mRecv = now; // 暂停：冻结在当前实时位置（琉光 anchor(pos())）
             } else if (posChanged && newPos != 0) {
                 long mine = livePos();
-                // ★控制器在活跃地报真实位置时，宿主快照里的 positionMs 只是它几百毫秒前（甚至更早）的采样；
-                //   拿它当权威反复重锚定，就是把位置一直往回拽 —— 进度来回跳、两页歌词一起滞后。
-                //   这段窗口里只让墙钟往前走。控制器不活跃时才用宿主值兜底，且只认「明显前进」（拖进度/跳曲），
-                //   向后回拽（滞后采样）一律忽略，只有明显的手动回拖才认。
                 boolean ctlFresh = now - lastCtlAt < 3000;
                 boolean forward = newPos > mine + 2000;
                 boolean seekBack = newPos < mine - 8000 && !ctlFresh;
                 if (!posSet || (!ctlFresh && (forward || seekBack))) { mPos = newPos; mRecv = now; posSet = true; posTrust = true; }
-            } else if (newPlaying && !wasPlaying) {
-                // 暂停→播放：锚点位置不变，只把锚点时间对齐到现在，从冻结处继续走
-                mRecv = now;
-            }
-            // 否则（纯换句、positionMs 没变）：完全不动锚点，由墙钟继续往后推——进度不再被换句清零
-        } else {
-            // 这条快照没有位置（常是「只推了当前句歌词」）：不动位置锚点；恢复播放时把锚点时间对齐到现在
-            if (newPlaying && !wasPlaying && posSet) mRecv = now;
-        }
-        mPosReported = hasPos ? newPos : mPosReported;  // 记住宿主上报的位置，下次比对
+            } else if (newPlaying && !wasPlaying) mRecv = now;
+        } else if (newPlaying && !wasPlaying && posSet) mRecv = now;
+        mPosReported = hasPos ? newPos : mPosReported;
         mDur = newDur;
-        // ★空号一律不覆盖认定号：QQ 音乐切歌常漏报 trackId，但歌名变化仍判 trackChanged，
-        //   若此时把 mTrackId 抹成空，拉歌词就失去校验基准，宿主缓存的上一首歌词会被直接采用。
-        if (!newTrack.isEmpty()) mTrackId = newTrack; // 空号沿用已认定的曲目，别把号抹掉
-        if (trackChanged) { // 换歌：上一首的整首歌词、累积句、当前句索引全部作废（整首歌词随后由 CarUi 重新拉）
-            liveTrack = mTrackId;
-            lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; liveLyrics.clear(); stopAdvance();
-            lyrVer++; // 歌词内容变了：折行缓存的版本号一起跳，否则行数相同会沿用上一首
-            lyrShown = Float.NaN; lyrAnimating = false; // 换歌：滚动位置直接就位，别从上一首的位置滑过去
-            lyrStale = prevLyric == null ? "" : prevLyric; // 换歌后宿主头几条快照常常还是上一首最后那句
-            // 8 秒内宿主推来的句子归属不明（很可能是上一首残留），不累积；整首歌词一到就立刻解冻。
-            // 超时仍未拿到整首则解冻兜底，避免只推逐句、不给整首的宿主永远空白。
-            lyrHoldUntil = now + 8000L;
-        }
-        if (!lyrStale.isEmpty() && !mLyric.equals(lyrStale)) lyrStale = ""; // 歌词变了：上一首那句过去了
+        mTrackRaw = newTid;
+        if (!newTid.isEmpty()) mTrackId = newTid; // 空号沿用认定号，别把歌词校验基准抹掉
+        if (trackChanged) newTrack(prevLyric, initial, now);
+        if (!lyrStale.isEmpty() && !mLyric.equals(lyrStale)) lyrStale = "";
         if (!mLyric.isEmpty() && !mLyric.equals(lyrStale)) {
-            // ★「第几句」只留一个真相：有整首歌词带每句时间时只认播放位置，宿主推来的句子只记文本。
-            //   以前两套一起写（推送定位 + 位置兜底），两边差一句时就每 200ms 互相覆盖 —— 表现正是歌词前后跳、抖。
             boolean byPos = curByPos() >= 0;
-            // ★换歌冻结期：整首没到、又还在 8 秒窗口内时，宿主推来的句子归属不明（QQ 常连推上一首残留），
-            //   只记文本 lyrLine 供整首到齐后定位，绝不累积进 liveLyrics、也不推进索引。
-            boolean holding = lyrics.isEmpty() && now < lyrHoldUntil;
+            boolean ok = byPos || lyricOk(mLyric);
             if (!mLyric.equals(lyrLine)) {
                 lyrLine = mLyric;
-                if (!byPos && !holding) setLine(mLyric); // 没有时间轴：只能按宿主推的句子走
-            } else if (!byPos && !holding) chainRepeat(); // 连着两句一样、又没有时间轴：按时间自己往下走
+                if (ok) setLine(mLyric);
+            } else if (ok) chainRepeat();
         }
         playing = newPlaying;
-        syncLyrIdx(); // 有每句时间：当前句跟播放位置走（宿主换句推送一停，只靠推送到不了就定格在第一句）
+        syncLyrIdx();
+        if (trackChanged) fetchLyrics(); // 一首歌只拉一次整首；失败/迟到由 MediaState 自己重试
         invalidate();
     }
-    /** 当前曲目的 trackId（拉整首歌词时做迟到校验用） */
-    String trackId() { return mTrackId; }
-    void setLyrics(List<CarData.LyLine> l) {
-        lyrics = new ArrayList<>();
-        lyrVer++; // 整首歌词换了一份：折行缓存作废
-        lyrTimes = new ArrayList<>();
-        if (l != null) for (CarData.LyLine ln : l) {
+    /** 换歌：清掉上一首的整首、逐句、索引和重试链；live=true 时头几句先压着（琉光 newTrack）。 */
+    private void newTrack(String stale, boolean initial, long now) {
+        liveTrack = mTrackId;
+        oldLyricLines.clear();
+        for (String s : lyrics) if (s != null && !s.isEmpty()) oldLyricLines.add(s);
+        oldLyricBlockUntil = now + 10000L;
+        cancelLyrRetry();
+        lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; liveLyrics.clear(); stopAdvance();
+        lyricsGen++; lyrTries = 0; lyrNoFull = false; lyrMisses = 0; lyrHold = ""; lyrHoldIdx = -2;
+        lyrVer++; lyrShown = Float.NaN; lyrAnimating = false;
+        lyrStale = stale == null ? "" : stale;
+        // 会话第一份快照直接采用当前句；之后换歌才需要判断「这是不是上一首残留」。
+        lyrStart = initial ? -1 : now;
+        lyrHoldUntil = lyrStart < 0 ? 0 : now + 6000L;
+    }
+    /** 这句能不能上屏（照琉光 MediaState.lyricOk）：有整首时按时间/顺序判，没整首时先压 6 秒。 */
+    private boolean lyricOk(String t) {
+        long now = SystemClock.elapsedRealtime();
+        if (!lyrics.isEmpty()) {
+            if (lyrStart < 0) return locate(t) >= 0;
+            long due = now - lyrStart + 10000;
+            int last = -1;
+            for (int i = 0; i < lyrics.size(); i++) {
+                if (!lyrics.get(i).equals(t)) continue;
+                long at = i < lyrTimes.size() ? lyrTimes.get(i) : -1L;
+                if (at <= due || i == lyrHoldIdx + 1) { lyrStart = -1; lyrHold = ""; return true; }
+                last = i;
+            }
+            if (last >= 0) { lyrHold = t; lyrHoldIdx = last; }
+            return false;
+        }
+        if (lyrStart >= 0 && now < lyrHoldUntil) { lyrHold = t; return false; }
+        if (now < oldLyricBlockUntil && oldLyricLines.contains(t)) { lyrHold = t; return false; }
+        lyrStart = -1; return true;
+    }
+    private void cancelLyrRetry() { if (lyrRetry != null) { clockH.removeCallbacks(lyrRetry); lyrRetry = null; } }
+    /** 拉整首歌词（照琉光 MediaState.loadLyrics）：号码不符 / 空结果都重试，最多 4 次；校验通过后按当前句定位。 */
+    void fetchLyrics() {
+        if (data == null || mTitle == null || mTitle.isEmpty() || lyrNoFull) return;
+        cancelLyrRetry();
+        int gen = ++lyricsGen;
+        lyrTries = 0; lyrAsked = 0;
+        fetchLyrics(gen);
+    }
+    private void fetchLyrics(final int gen) {
+        if (gen != lyricsGen) return;
+        lyrAsked = SystemClock.elapsedRealtime();
+        data.mediaLyrics(r -> {
+            if (gen != lyricsGen || r == null) return;
+            String want = !mTrackRaw.isEmpty() ? mTrackRaw : mTitle;
+            boolean idOk = !r.tid.isEmpty() && r.tid.equals(want);
+            if (!idOk || r.lines == null || r.lines.isEmpty()) {
+                retryLyrics(gen);
+                return;
+            }
+            applyLyrics(gen, r.lines);
+        });
+    }
+    private void retryLyrics(final int gen) {
+        if (gen != lyricsGen) return;
+        if (++lyrTries <= 3) {
+            cancelLyrRetry();
+            lyrRetry = () -> { lyrRetry = null; fetchLyrics(gen); };
+            clockH.postDelayed(lyrRetry, 1500);
+        }
+    }
+    private void applyLyrics(final int gen, List<CarData.LyLine> l) {
+        if (gen != lyricsGen) return;
+        List<String> ns = new ArrayList<>(); List<Long> ts = new ArrayList<>();
+        for (CarData.LyLine ln : l) {
             if (ln == null || ln.t == null) continue;
-            if (ln.t.contains("\n")) { // 有的宿主一行给整首：拆开，时间算在第一行上
+            if (ln.t.contains("\n")) {
                 boolean first = true;
-                for (String p : ln.t.split("\n", -1)) {
-                    String t = lyricText(p);
+                for (String part : ln.t.split("\n", -1)) {
+                    String t = lyricText(part);
                     if (t.isEmpty()) continue;
-                    lyrics.add(t); lyrTimes.add(first ? ln.at : -1L); first = false;
+                    ns.add(t); ts.add(first ? ln.at : -1L); first = false;
                 }
             } else {
                 String t = lyricText(ln.t);
-                if (t.isEmpty()) continue;
-                lyrics.add(t); lyrTimes.add(ln.at);
+                if (!t.isEmpty()) { ns.add(t); ts.add(ln.at); }
             }
         }
-        if (!lyrics.isEmpty()) {
-            lyrHoldUntil = 0;                                   // 整首歌词到齐：归属已确认，解冻逐句累积
-            liveLyrics.clear();                                 // 有整首歌词就不需要快照累积了
-            String cur = !lyrLine.isEmpty() ? lyrLine : mLyric;  // 当前这句（换歌后重新定位用）
-            int byPos = curByPos();                              // ★有时间轴：直接按播放位置定，不用宿主推的那句
-            if (byPos >= 0) {
-                lyrIdx = byPos;
-                if (cur != null && !cur.isEmpty()) lyrLine = cur;
-            } else {
-                lyrIdx = -1;                                     // 索引按新列表重来
-                if (cur != null && !cur.isEmpty()) setLine(cur);  // 没有时间轴：按句子在新列表里定位
-                if (lyrIdx < 0) lyrIdx = idxByPos();              // 定位不到：按播放位置兜底
-            }
+        if (ns.isEmpty()) { retryLyrics(gen); return; }
+        // 当前已认定的句子不在新整首里：多半是宿主缓存的上一首，别上屏（琉光 missLine 的口径）。
+        if (!lyrLine.isEmpty() && locateIn(ns, lyrLine) < 0) {
+            if (++lyrMisses >= 4) lyrNoFull = true;
+            else retryLyrics(gen);
+            return;
         }
+        lyrics = ns; lyrTimes = ts;
+        lyrVer++; liveLyrics.clear();
+        oldLyricLines.clear(); oldLyricBlockUntil = 0;
+        lyrStart = -1; lyrHoldUntil = 0; lyrHold = ""; lyrHoldIdx = -2;
+        int idx = !lyrLine.isEmpty() ? locateIn(lyrics, lyrLine) : -1;
+        if (idx < 0) idx = curByPos();
+        if (idx >= 0) {
+            lyrIdx = idx;
+            if (idx < lyrTimes.size() && lyrTimes.get(idx) > 0) { mPos = lyrTimes.get(idx); mRecv = SystemClock.elapsedRealtime(); posSet = true; }
+            chainRepeat();
+        } else lyrIdx = -1;
+        if (pageIdx == 2) bridge.pushNow();
         invalidate();
     }
+    private static int locateIn(List<String> list, String t) {
+        if (t == null || t.isEmpty()) return -1;
+        for (int i = 0; i < list.size(); i++) if (t.equals(list.get(i))) return i;
+        return -1;
+    }
+    /** 当前曲目的 trackId（保留给调试/外部读；歌词归属一律用快照原始号） */
+    String trackId() { return mTrackId; }
     /** 宿主歌词行可能是 {"text":"...","timeMs":...} 的 JSON 串，解析出纯文本（兼容 text/content/words/lyric 几个键） */
     /** 歌词文本归一（照琉光 clean）：折叠连续空白再 trim —— 快照里的句子和整首里的同一句必须长得一样才对得上 */
     private static String clean(String s) { return s == null ? "" : WS.matcher(s).replaceAll(" ").trim(); }
@@ -1036,6 +1087,10 @@ public final class Hud extends View {
             int i = locate(t);
             if (i < 0) return;                    // 这句不在整首里（不是这首的 / 上一首残留）：不动索引
             lyrIdx = i;
+            // 琉光：换句时用这句在整首里的时间重定位置，比宿主滞后的 positionMs 准；控制器随后还能再校正。
+            if (i < lyrTimes.size() && lyrTimes.get(i) > 0) {
+                mPos = lyrTimes.get(i); mRecv = SystemClock.elapsedRealtime(); posSet = true;
+            }
             chainRepeat();
         } else {                                  // 没有整首：宿主只推当前句时，听到的新句子接在后面
             if (liveLyrics.isEmpty() || !t.equals(liveLyrics.get(liveLyrics.size() - 1))) {
@@ -1112,6 +1167,9 @@ public final class Hud extends View {
      * 控制器这边半秒内就把进度拉回真实位置。
      */
     void ctlPos(long p, long at, float speed, boolean on, String title) {
+        // 和琉光 MediaState.ctlPos 一样：控制器位置只在「多媒体」在放时可信；
+        // QQ/酷我直接报包名的音源不走这里（它们的位置用宿主快照 + 每句时间锚点），没报包名时仍允许控制器校正。
+        if (!mPkg.isEmpty() && !MEDIA_CENTER.equals(mPkg)) return;
         // 歌名归一后再比：宿主快照和控制器给的常差空格/大小写，严格 equals 会让控制器位置长期进不来
         if (!playing || title == null || !clean(title).equals(clean(mTitle))) return; // 暂停中 / 换歌路上不认
         long now = SystemClock.elapsedRealtime();
