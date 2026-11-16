@@ -253,6 +253,18 @@ final class CarData {
         return new LyLine(a == null ? "" : a.optString(i), -1);
     }
     private int lyricsGen = 0; // 换歌/再次拉取会让旧的重试链作废
+    /** ★歌词归属校验：号码对 QQ 音乐不可靠（漏报/复用），改用歌词正文指纹认「这是不是上一首那份」。
+     *  lyricSig=本次已采用的整首歌词；blockSig=换歌那一刻冻结的上一首指纹，新歌歌词不许和它相同。 */
+    private String lyricSig = "", blockLyricSig = "";
+    private static String lyricSigOf(List<LyLine> l) {
+        if (l == null || l.isEmpty()) return "";
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < l.size(); i++) {
+            LyLine ln = l.get(i);
+            if (ln != null && ln.t != null) b.append(ln.t).append('\n');
+        }
+        return b.toString();
+    }
     void mediaLyrics(String expectTid, LyricsCb cb) {
         int gen = ++lyricsGen;
         fetchLyrics(expectTid == null ? "" : expectTid, cb, gen, 0);
@@ -277,19 +289,25 @@ final class CarData {
                 if (!live.isEmpty() && !"null".equals(live)) want = live;
             }
             boolean mismatched = !rtid.isEmpty() && !want.isEmpty() && !rtid.equals(want);
-            boolean noIdButLyrics = rtid.isEmpty() && !l.isEmpty(); // 号空却带歌词：规范里的「未就绪」组合，归属不可信
-            boolean noExpect = want.isEmpty() && !l.isEmpty();      // 我们连期待号都没有，宿主的号无法对照
-            // 空结果/号对不上重试 4 次；「空号带歌词」2 次、「没有校验基准」1 次——
-            // 宿主始终不给号时也要把歌词显示出来，别为了防旧歌词让用户永远看不到歌词
-            boolean retry = l.isEmpty() ? attempt < 4
-                          : mismatched ? attempt < 4
-                          : noIdButLyrics ? attempt < 2
-                          : noExpect && attempt < 1;
-            if (retry) { // 歌词可能迟到，旧结果不是永久失败：间隔重试
-                main.postDelayed(() -> fetchLyrics(expectTid, cb, gen, attempt + 1), 1200L * (attempt + 1));
+            String sig = lyricSigOf(l);
+            // ★QQ 音乐切歌时号码可能空、也可能沿用旧号，上面那条号码校验会失效；
+            //   更硬的证据是正文：换歌时把上一首整首歌词指纹冻结，返回内容和它一字不差 = 宿主缓存没刷新，
+            //   一律判旧。这是上一轮修复漏掉的那条路。
+            boolean sameAsOld = !blockLyricSig.isEmpty() && sig.equals(blockLyricSig);
+            // 硬不可信：号明确对不上 / 正文就是上一首 / 压根没歌词 —— 重试耗尽也宁可空着，不上屏
+            boolean hard = mismatched || sameAsOld || l.isEmpty();
+            // 软不可信：号空带歌词但正文不是上一首 / 我们也没校验基准 —— 少重试几次仍可采用，
+            // 否则宿主一直不给号的音源会永远看不到歌词
+            boolean soft = rtid.isEmpty() && !l.isEmpty() && !sameAsOld;
+            boolean retry = (hard && attempt < 4) || (soft && attempt < 2);
+            if (retry) { // 歌词可能迟到，旧结果不是永久失败：间隔重试，封顶 5 秒
+                main.postDelayed(() -> fetchLyrics(expectTid, cb, gen, attempt + 1), Math.min(1200L * (attempt + 1), 5000L));
                 return;
             }
-            if (cb != null) cb.on((mismatched || l.isEmpty()) ? new ArrayList<>() : l);
+            if (hard) { if (cb != null) cb.on(new ArrayList<>()); return; }
+            if (cb != null) cb.on(l);
+            lyricSig = sig;
+            blockLyricSig = "";
         }); } catch (Exception ignored) { if (gen == lyricsGen && cb != null) cb.on(new ArrayList<>()); }
     }
 
@@ -412,6 +430,8 @@ final class CarData {
         // 同一首歌才按时间戳去重，拦掉迟到的旧进度/重复包。★否则复用号切歌时新歌首帧会被吞，歌词晚一轮才动。
         boolean songChanged = !tid.equals(appliedTid) || (!ti.isEmpty() && !ti.equals(appliedTitle));
         if (!songChanged && ua > 0 && appliedUa > 0 && ua <= appliedUa) return;
+        // ★换歌：冻结上一首整首歌词指纹。QQ 音乐切歌时号码常空/复用，正文相同就成了「还是上一首」的唯一硬证据。
+        if (songChanged) blockLyricSig = lyricSig;
         media = m; appliedTid = tid; appliedTitle = ti; appliedUa = ua;
         out.media(media);
     }

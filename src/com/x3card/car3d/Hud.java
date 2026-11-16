@@ -275,6 +275,9 @@ public final class Hud extends View {
     private float lyrMaskKey;     // 遮罩缓存的尺寸键
     private String lyrLine = "";  // 当前显示的句子（判断宿主推来的句子有没有换）
     private String lyrStale = ""; // 换歌时上一首留下的那句：宿主换歌后头几条快照常常还是它，照琉光 lyr.stale 挡掉
+    /** ★换歌后的逐句歌词冻结窗口：lyrStale 只挡得住「上一首最后一句」，QQ 切歌会连推好几条上一首残留，
+     *  其余句子会被 setLine() 累积进 liveLyrics 直接显示成上一首。整首歌词到齐（或超时兜底）前一律不累积。 */
+    private long lyrHoldUntil = 0;
     private Runnable lyrAdvance;  // 连着两句一模一样时按时间自己往下走（琉光 chainRepeat）
     private String liveTrack = "", mTrackId = "";
     private float tellBottom, speedBottom, statusTop, tellLw, tellRw; // 音乐卡片要避开的其他区域几何（每帧随画更新）
@@ -941,16 +944,22 @@ public final class Hud extends View {
             lyrVer++; // 歌词内容变了：折行缓存的版本号一起跳，否则行数相同会沿用上一首
             lyrShown = Float.NaN; lyrAnimating = false; // 换歌：滚动位置直接就位，别从上一首的位置滑过去
             lyrStale = prevLyric == null ? "" : prevLyric; // 换歌后宿主头几条快照常常还是上一首最后那句
+            // 8 秒内宿主推来的句子归属不明（很可能是上一首残留），不累积；整首歌词一到就立刻解冻。
+            // 超时仍未拿到整首则解冻兜底，避免只推逐句、不给整首的宿主永远空白。
+            lyrHoldUntil = now + 8000L;
         }
         if (!lyrStale.isEmpty() && !mLyric.equals(lyrStale)) lyrStale = ""; // 歌词变了：上一首那句过去了
         if (!mLyric.isEmpty() && !mLyric.equals(lyrStale)) {
             // ★「第几句」只留一个真相：有整首歌词带每句时间时只认播放位置，宿主推来的句子只记文本。
             //   以前两套一起写（推送定位 + 位置兜底），两边差一句时就每 200ms 互相覆盖 —— 表现正是歌词前后跳、抖。
             boolean byPos = curByPos() >= 0;
+            // ★换歌冻结期：整首没到、又还在 8 秒窗口内时，宿主推来的句子归属不明（QQ 常连推上一首残留），
+            //   只记文本 lyrLine 供整首到齐后定位，绝不累积进 liveLyrics、也不推进索引。
+            boolean holding = lyrics.isEmpty() && now < lyrHoldUntil;
             if (!mLyric.equals(lyrLine)) {
                 lyrLine = mLyric;
-                if (!byPos) setLine(mLyric); // 没有时间轴：只能按宿主推的句子走
-            } else if (!byPos) chainRepeat(); // 连着两句一样、又没有时间轴：按时间自己往下走
+                if (!byPos && !holding) setLine(mLyric); // 没有时间轴：只能按宿主推的句子走
+            } else if (!byPos && !holding) chainRepeat(); // 连着两句一样、又没有时间轴：按时间自己往下走
         }
         playing = newPlaying;
         syncLyrIdx(); // 有每句时间：当前句跟播放位置走（宿主换句推送一停，只靠推送到不了就定格在第一句）
@@ -978,6 +987,7 @@ public final class Hud extends View {
             }
         }
         if (!lyrics.isEmpty()) {
+            lyrHoldUntil = 0;                                   // 整首歌词到齐：归属已确认，解冻逐句累积
             liveLyrics.clear();                                 // 有整首歌词就不需要快照累积了
             String cur = !lyrLine.isEmpty() ? lyrLine : mLyric;  // 当前这句（换歌后重新定位用）
             int byPos = curByPos();                              // ★有时间轴：直接按播放位置定，不用宿主推的那句
