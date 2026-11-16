@@ -1896,8 +1896,28 @@ final class Scene implements GLSurfaceView.Renderer {
      * 一停就僵住（暂停时背景不动、看起来像卡死）。进页开、离页关，并入 busy。
      */
     private volatile boolean alive;
-    void keepAlive(boolean on) { if (alive != on) { alive = on; if (on) wake(); } }
     private final Runnable rainWake = new Runnable() { @Override public void run() { view.requestRender(); } };
+
+    /**
+     * 离开第三页：停止这一页的所有渲染。★只掐出帧请求，不动任何状态与数据——
+     * 媒体订阅、控制器、快照推送照常跑（进页时 pushSnapNow 会把离页期间的变化一次补上）。
+     * 出帧请求统一由 LgHost.requestRender 的 onPage 闸门拦截；这里额外收掉挂着的雨珠定时器、
+     * 重置时间基线，保证离页后没有一拍定时器能再把 GL 叫醒，重进页第一帧也不会按离页前的时间差跳一下。
+     */
+    void stopRender() {
+        alive = false;
+        view.view().removeCallbacks(rainWake);
+        rainOnly = false;
+        lastT = 0;
+        sceneDirty = true;
+    }
+    /** 进第三页：恢复持续出帧，强制整帧重画一次（别贴回离页前拷下来的旧画面） */
+    void resumeRender() {
+        alive = true;
+        lastT = 0;
+        sceneDirty = true;
+        view.requestRender();
+    }
 
     // ================= 玻璃上的雨珠（见 Rain） =================
     private final Rain rain = new Rain();

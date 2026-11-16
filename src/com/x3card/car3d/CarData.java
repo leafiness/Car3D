@@ -106,6 +106,7 @@ final class CarData {
     // 已上屏的曲目号与时间戳：换歌（trackId 变了）必须立即上屏，同一首歌才按 updatedAt 去重，
     // 避免旧快照（上一首的进度回灌、或新歌首帧时间戳略小）被误丢或误覆盖
     private String appliedTid = "";
+    private String appliedTitle = ""; // 号复用时靠歌名认出换歌，别把新歌首帧当重复包吞掉
     private long appliedUa = -1;
     private Map<String, String> caps;
     private List<String> fields = FIELDS, extra = new ArrayList<>();
@@ -265,12 +266,30 @@ final class CarData {
             if (a == null && r != null) { JSONObject d = r.optJSONObject("data"); if (d != null) a = d.optJSONArray("lines"); } // 有的宿主包一层 data
             List<LyLine> l = new ArrayList<>();
             for (int i = 0; a != null && i < a.length(); i++) l.add(lineOf(a, i));
-            boolean stale = !rtid.isEmpty() && !expectTid.isEmpty() && !rtid.equals(expectTid); // 迟到的那份带着自己的曲目号，对不上就不用
-            if ((l.isEmpty() || stale) && attempt < 4) { // 歌词可能迟到，空结果不是永久失败：间隔重试
+            // ★QQ 音乐切歌时宿主歌词异步解析，未就绪窗口会违反规范（规范：trackId=null 且 lines 为空），
+            //   出现「号空、lines 却是上一首缓存」。号空带歌词一律先重试，不能一次采用就定格在旧歌词。
+            //   校验基准取当前最新快照的号：QQ 切歌瞬间漏报，1~2 秒后补报，重试时就能对上，
+            //   不会拿换歌那一刻的空号（或沿用的旧号）去比，把新歌歌词误判成上一首。
+            String want = expectTid;
+            JSONObject cur = media;
+            if (cur != null) {
+                String live = cur.optString("trackId", "");
+                if (!live.isEmpty() && !"null".equals(live)) want = live;
+            }
+            boolean mismatched = !rtid.isEmpty() && !want.isEmpty() && !rtid.equals(want);
+            boolean noIdButLyrics = rtid.isEmpty() && !l.isEmpty(); // 号空却带歌词：规范里的「未就绪」组合，归属不可信
+            boolean noExpect = want.isEmpty() && !l.isEmpty();      // 我们连期待号都没有，宿主的号无法对照
+            // 空结果/号对不上重试 4 次；「空号带歌词」2 次、「没有校验基准」1 次——
+            // 宿主始终不给号时也要把歌词显示出来，别为了防旧歌词让用户永远看不到歌词
+            boolean retry = l.isEmpty() ? attempt < 4
+                          : mismatched ? attempt < 4
+                          : noIdButLyrics ? attempt < 2
+                          : noExpect && attempt < 1;
+            if (retry) { // 歌词可能迟到，旧结果不是永久失败：间隔重试
                 main.postDelayed(() -> fetchLyrics(expectTid, cb, gen, attempt + 1), 1200L * (attempt + 1));
                 return;
             }
-            if (cb != null) cb.on(stale ? new ArrayList<>() : l);
+            if (cb != null) cb.on((mismatched || l.isEmpty()) ? new ArrayList<>() : l);
         }); } catch (Exception ignored) { if (gen == lyricsGen && cb != null) cb.on(new ArrayList<>()); }
     }
 
@@ -384,12 +403,16 @@ final class CarData {
         out.sys(new LinkedHashMap<>(sys));
     }
     private void onMedia(JSONObject m) {
-        if (!"ok".equals(m.optString("status"))) { media = null; appliedTid = ""; appliedUa = -1; out.media(null); return; }
+        if (!"ok".equals(m.optString("status"))) { media = null; appliedTid = ""; appliedTitle = ""; appliedUa = -1; out.media(null); return; }
         String tid = m.optString("trackId", "");
+        if ("null".equals(tid)) tid = "";
+        String ti = m.optString("title", "");
         long ua = m.optLong("updatedAt");
-        // 换歌（trackId 变了）立即上屏，不被 updatedAt 比较误丢；同一首歌才按时间戳去重，拦掉迟到的旧进度/重复包
-        if (tid.equals(appliedTid) && ua > 0 && appliedUa > 0 && ua <= appliedUa) return;
-        media = m; appliedTid = tid; appliedUa = ua;
+        // 换歌（号变了，或号没变但歌名变了——车机复用号）立即上屏，不被 updatedAt 比较误丢；
+        // 同一首歌才按时间戳去重，拦掉迟到的旧进度/重复包。★否则复用号切歌时新歌首帧会被吞，歌词晚一轮才动。
+        boolean songChanged = !tid.equals(appliedTid) || (!ti.isEmpty() && !ti.equals(appliedTitle));
+        if (!songChanged && ua > 0 && appliedUa > 0 && ua <= appliedUa) return;
+        media = m; appliedTid = tid; appliedTitle = ti; appliedUa = ua;
         out.media(media);
     }
     Map<String, Object> car() { return new LinkedHashMap<>(car); }

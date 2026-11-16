@@ -738,7 +738,7 @@ public class MainActivity extends Activity implements Uiplus.Listener, CarData.L
     /** 封面：coverUrl 是会话绑定的资源标识，走 openCover（不是 HTTP 下载），解码完回调（由调用方用序号丢弃过期结果） */
     @Override public void loadCover(String url, CarData.CoverCb cb) { data.loadCover(url, cb); }
     /** 换歌了拉整首歌词 */
-    @Override public void musicLyrics() { data.mediaLyrics(ui.hud.trackId(), l -> ui.setLyrics(l)); }
+    @Override public void musicLyrics() { data.mediaLyrics(ui.lyricExpectTid(), l -> ui.setLyrics(l)); }
 
     // ================= 点封面：打开正在放歌的那个 App =================
     /** 点封面打开音源 App：宿主原生动作 apps.launch（参数是包名）。

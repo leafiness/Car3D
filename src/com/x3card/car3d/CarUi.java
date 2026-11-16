@@ -61,6 +61,7 @@ final class CarUi extends FrameLayout implements CarPage.Out {
     private JSONObject mediaNow;
     private String lastTrackId = "";
     private String lastTitle = ""; // 上一次认定的歌名：车机复用 trackId 时靠它识别换歌
+    private String lyricExpectTid = ""; // 本轮拉歌词用的「快照原始曲目号」（可为空），不能用沿用号做严格比对
     private String covUrl = "", covTid = ""; // 当前正在显示的封面地址与它对应的曲目（uiplus 规范：coverUrl 即真相，不做曲目→封面缓存）
     private int covSeq = 0;                   // 换图序号：期间又推了新地址/切了歌，旧加载结果就丢弃
     private long coverHash = Long.MIN_VALUE;  // 认准的那张封面的内容指纹（没封面/取不到时为 MIN_VALUE）
@@ -308,6 +309,8 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         // 曲目号：优先用 trackId；车机偶发漏报时沿用上一次认定的号（和 Hud 的换歌判定对齐），
         // 别因为一条空号快照就重新拉整首歌词、重取封面，歌词会在这期间跳回开头。
         String raw = m.optString("trackId", "");
+        if ("null".equals(raw)) raw = "";
+        lyricExpectTid = raw; // 每帧都更新：宿主切歌后补报号时，歌词校验要用最新号而不是换歌那一刻的空号
         String tid = !raw.isEmpty() ? raw : (!lastTrackId.isEmpty() ? lastTrackId : m.optString("title", ""));
         String ti = m.optString("title", "");
         // ★车机有时复用同一个 trackId 切歌：只看号会漏掉换歌 → 不重拉歌词、不重取封面（偶现「切歌不变」）。
@@ -368,6 +371,9 @@ final class CarUi extends FrameLayout implements CarPage.Out {
         hashTid = fTid;
         hud.setCover(b);
     }
+    /** 歌词校验用的原始曲目号：宿主漏报号时为空，不能拿沿用号去比对，否则新歌歌词会被当成上一首丢掉 */
+    String lyricExpectTid() { return lyricExpectTid; }
+
     /** 整首歌词（行列表） */
     void setLyrics(List<CarData.LyLine> l) { main.post(() -> hud.setLyrics(l)); }
     /** 一打开就用对深浅色（不渐变） */

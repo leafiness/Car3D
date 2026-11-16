@@ -932,7 +932,9 @@ public final class Hud extends View {
         }
         mPosReported = hasPos ? newPos : mPosReported;  // 记住宿主上报的位置，下次比对
         mDur = newDur;
-        if (trackChanged || !newTrack.isEmpty()) mTrackId = newTrack; // 空号沿用已认定的曲目，别把号抹掉
+        // ★空号一律不覆盖认定号：QQ 音乐切歌常漏报 trackId，但歌名变化仍判 trackChanged，
+        //   若此时把 mTrackId 抹成空，拉歌词就失去校验基准，宿主缓存的上一首歌词会被直接采用。
+        if (!newTrack.isEmpty()) mTrackId = newTrack; // 空号沿用已认定的曲目，别把号抹掉
         if (trackChanged) { // 换歌：上一首的整首歌词、累积句、当前句索引全部作废（整首歌词随后由 CarUi 重新拉）
             liveTrack = mTrackId;
             lyrics.clear(); lyrTimes.clear(); lyrIdx = -1; lyrLine = ""; liveLyrics.clear(); stopAdvance();
