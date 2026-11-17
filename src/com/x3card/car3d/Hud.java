@@ -122,7 +122,18 @@ public final class Hud extends View {
         //   事件一停就没人刷新当前句 —— 歌词卡在旧句、和进度脱节，偶现且重启重新拉到歌词后才对上。
         //   这里和 setMedia 末尾、第三页桥接走的是同一个 syncLyrIdx/curByPos（同一条位置时间线），
         //   不是历史上「一条按宿主句子、一条按位置」的两条线，不会互相覆盖导致高频跳。
-        if (pageIdx != 2) syncLyrIdx(); // 第三页由 MediaBridge 200ms 泵按位置更新，Hud 那会儿不画
+        if (pageIdx != 2) {
+            syncLyrIdx(); // 第三页由 MediaBridge 200ms 泵按位置更新，Hud 那会儿不画
+            // ★音乐页兜底补问：宿主订阅推送稀疏/停摆时（QQ/酷我切歌后常见），音乐页会永远停在打开时
+            //   那一份快照 —— 歌名、封面、歌词、进度全不跟着切；第三页因为有 MediaBridge 每 2.5s
+            //   主动 media.get 才正常。这里给音乐页补同样的兜底：2.5s 没收到快照就主动问一次。
+            //   lastMediaAt 在 setMedia 收到快照时刷新；先推进计时再问，避免宿主回得慢时每拍都问。
+            long t = SystemClock.elapsedRealtime();
+            if (mHadMedia && lastMediaAt > 0 && t - lastMediaAt > 2500) {
+                lastMediaAt = t;
+                if (mediaPoll != null) mediaPoll.run();
+            }
+        }
         invalidate();
         // 重绘节奏：歌词滚动动画期间 16ms（要连续帧才顺）；第三页不画 Hud，1s 足够；其余按播放态 200/1000ms
         long d;
@@ -788,6 +799,7 @@ public final class Hud extends View {
     }
     void setMediaPoll(Runnable r) { mediaPoll = r; }
     private Runnable mediaPoll; // 主动问一次媒体（订阅推送不可靠时的兜底）
+    private long lastMediaAt;   // 上次收到媒体快照的时刻（音乐页补问计时用，第三页由 MediaBridge 自己计）
 
     /** 媒体快照桥：歌词数组、调度、补问都交给它；Hud 这边只交数据 */
     private final MediaBridge bridge = new MediaBridge(new MediaBridge.Src() {
@@ -895,6 +907,7 @@ public final class Hud extends View {
         }
         mHadMedia = true;
         bridge.seen(); // 收到新快照：补问的计时归零
+        lastMediaAt = SystemClock.elapsedRealtime(); // 音乐页补问计时归零
         String prevTitle = mTitle, prevArtist = mArtist, prevLyric = mLyric;
         long now = SystemClock.elapsedRealtime();
         mTitle = m.optString("title", ""); mArtist = m.optString("artist", "");
