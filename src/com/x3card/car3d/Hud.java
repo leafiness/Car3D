@@ -946,11 +946,13 @@ public final class Hud extends View {
         if (trackChanged) newTrack(prevLyric, initial, now);
         if (!lyrStale.isEmpty() && !mLyric.equals(lyrStale)) lyrStale = "";
         if (!mLyric.isEmpty() && !mLyric.equals(lyrStale)) {
-            boolean byPos = curByPos() >= 0;
-            boolean ok = byPos || lyricOk(mLyric);
+            // ★宿主推来的句子一律过 lyricOk（含换歌后 10 秒的上一首阻挡）。以前有整首时间轴时
+            //   byPos=true 直接绕过检查，QQ/酷我切歌后连推的上一首残留句只要有相同文本就上屏。
+            //   当前句本来就每帧按播放位置算，放行这些句子除了污染 lyrLine/锚点没有好处。
+            boolean ok = lyricOk(mLyric);
             if (!mLyric.equals(lyrLine)) {
-                lyrLine = mLyric;
-                if (ok) setLine(mLyric);
+                // 只有认可的句子才记进 lyrLine，避免残留句污染 applyLyrics 的整首归属校验
+                if (ok) { lyrLine = mLyric; setLine(mLyric); }
             } else if (ok) chainRepeat();
         }
         playing = newPlaying;
@@ -976,6 +978,9 @@ public final class Hud extends View {
     /** 这句能不能上屏（照琉光 MediaState.lyricOk）：有整首时按时间/顺序判，没整首时先压 6 秒。 */
     private boolean lyricOk(String t) {
         long now = SystemClock.elapsedRealtime();
+        // ★换歌后 10 秒内上一首整首里出现过的句子一律不认（QQ 残留连推），有整首/无整首都拦，
+        //   不受 lyrStart 是否已解冻影响 —— 这是「歌词有时还显示上一首」的主要漏口。
+        if (now < oldLyricBlockUntil && oldLyricLines.contains(t)) { lyrHold = t; return false; }
         if (!lyrics.isEmpty()) {
             if (lyrStart < 0) return locate(t) >= 0;
             long due = now - lyrStart + 10000;
@@ -1050,13 +1055,15 @@ public final class Hud extends View {
         }
         lyrics = ns; lyrTimes = ts;
         lyrVer++; liveLyrics.clear();
-        oldLyricLines.clear(); oldLyricBlockUntil = 0;
+        // ★换歌后 10 秒的上一首阻挡保留到自然到期，不在整首到货时提前撤掉：QQ 切歌后宿主还会
+        //   连推几条上一首残留，其中和新歌相同的句子会被 lyricOk 误放行显示成上一首。
+        //   当前句本来就每帧按播放位置算，挡住推送句子不影响滚动，只会更安全。
         lyrStart = -1; lyrHoldUntil = 0; lyrHold = ""; lyrHoldIdx = -2;
         int idx = !lyrLine.isEmpty() ? locateIn(lyrics, lyrLine) : -1;
         if (idx < 0) idx = curByPos();
         if (idx >= 0) {
             lyrIdx = idx;
-            if (idx < lyrTimes.size() && lyrTimes.get(idx) > 0) { mPos = lyrTimes.get(idx); mRecv = SystemClock.elapsedRealtime(); posSet = true; }
+            if (idx < lyrTimes.size()) anchorByLine(lyrTimes.get(idx));
             chainRepeat();
         } else lyrIdx = -1;
         if (pageIdx == 2) bridge.pushNow();
@@ -1095,6 +1102,16 @@ public final class Hud extends View {
         for (int i = 0; i <= from && i < lyrics.size(); i++) if (t.equals(lyrics.get(i))) return i;
         return -1;
     }
+    /** 用歌词句的开始时间校准进度（照琉光 setLine 的 anchor，但收紧方向）。
+     *  ★宿主推来的句子常是「刚唱完的上一句」，它的时间比真实进度早几秒；照搬源码无条件 anchor 会把
+     *  进度往回拽，墙钟/控制器紧接着又拉回 —— 表现就是进度一跳一跳、歌词跟着闪。QQ/酷我报自身包名
+     *  时控制器位置被挡（ctlPos 不生效），没有 0.5s 校正兜底，这个坑被放大。
+     *  所以这里只在前拉（句时间明显晚于当前进度、说明进度落后了）时校准，绝不往回拽。 */
+    private void anchorByLine(long at) {
+        if (at <= 0 || !posSet) return;
+        long mine = livePos();
+        if (at > mine + 1200L) { mPos = at; mRecv = SystemClock.elapsedRealtime(); posSet = true; }
+    }
     /** 定位当前句（照琉光 setLine）：有整首就找它在整首里的位置；没有整首就把听到的句子接在后面 */
     private void setLine(String t) {
         lyrLine = t;
@@ -1104,9 +1121,7 @@ public final class Hud extends View {
             if (i < 0) return;                    // 这句不在整首里（不是这首的 / 上一首残留）：不动索引
             lyrIdx = i;
             // 琉光：换句时用这句在整首里的时间重定位置，比宿主滞后的 positionMs 准；控制器随后还能再校正。
-            if (i < lyrTimes.size() && lyrTimes.get(i) > 0) {
-                mPos = lyrTimes.get(i); mRecv = SystemClock.elapsedRealtime(); posSet = true;
-            }
+            if (i < lyrTimes.size()) anchorByLine(lyrTimes.get(i));
             chainRepeat();
         } else {                                  // 没有整首：宿主只推当前句时，听到的新句子接在后面
             if (liveLyrics.isEmpty() || !t.equals(liveLyrics.get(liveLyrics.size() - 1))) {
