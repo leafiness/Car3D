@@ -117,9 +117,12 @@ public final class Hud extends View {
     private final Handler clockH = new Handler(Looper.getMainLooper());
     private final Runnable clockRun = this::clockTick;
     private void clockTick() {
-        // ★索引只在 setMedia（收到宿主快照 / 位置校正）里改，时钟只负责重绘 —— 与 681 及之前的实现一致。
-        //   曾经在这里每 200ms 也同步一次索引，结果和 setMedia 形成两条时间线：一边按宿主推的句子定位、
-        //   一边按播放位置算，两边差一句就互相覆盖，表现就是歌词高频前后跳。
+        // ★当前句按「播放位置」实时算（同琉光 Scene.lyricState：位置是唯一真相，每帧重算）。
+        //   以前索引只在 setMedia/ctlPos 事件里更新：QQ/酷我快照推送稀疏、控制器位置又因报自身包名被挡时，
+        //   事件一停就没人刷新当前句 —— 歌词卡在旧句、和进度脱节，偶现且重启重新拉到歌词后才对上。
+        //   这里和 setMedia 末尾、第三页桥接走的是同一个 syncLyrIdx/curByPos（同一条位置时间线），
+        //   不是历史上「一条按宿主句子、一条按位置」的两条线，不会互相覆盖导致高频跳。
+        if (pageIdx != 2) syncLyrIdx(); // 第三页由 MediaBridge 200ms 泵按位置更新，Hud 那会儿不画
         invalidate();
         // 重绘节奏：歌词滚动动画期间 16ms（要连续帧才顺）；第三页不画 Hud，1s 足够；其余按播放态 200/1000ms
         long d;
@@ -1434,7 +1437,10 @@ public final class Hud extends View {
         lyrAnimating = false; // 先复位：只有真正走多行歌词那条路才可能重新置 true，避免别处残留让时钟一直高速重绘
         List<String> all = lyrics.isEmpty() ? liveLyrics : lyrics; // 整首优先；没有就用快照逐句累积的行
         if (!all.isEmpty()) {
-            int cur = lyrIdx;                                   // 用持久的当前句索引：不再每帧从 0 重扫（重复句会跳回第一次出现的位置）
+            // ★当前句以「播放位置」为唯一真相（同琉光 Scene.lyricState）：整首带每句时间时每帧按位置算，
+            //   宿主逐句推送一停也不会卡在旧句。位置不可信（没时间轴 / 刚换歌）才退回宿主定位的索引。
+            int cur = curByPos();
+            if (cur < 0) cur = lyrIdx;
             if (cur < 0 || cur >= all.size()) cur = idxByPos(); // 还没定位到：按播放位置兜底，不再退回整首中间
             drawLyricLines(c, x, y, w, h, all, cur);
             return;
